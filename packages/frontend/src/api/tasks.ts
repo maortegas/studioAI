@@ -30,5 +30,13 @@ export const tasksApi = {
   delete: async (id: string): Promise<void> => {
     await apiClient.delete(`/tasks/${id}`);
   },
+
+  generateStories: async (projectId: string, count?: number): Promise<{ job_id: string; message: string }> => {
+    const response = await apiClient.post('/tasks/stories/generate', {
+      project_id: projectId,
+      count,
+    });
+    return response.data;
+  },
 };
 

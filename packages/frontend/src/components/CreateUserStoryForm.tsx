@@ -55,11 +55,22 @@ export default function CreateUserStoryForm({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Description
+            <span className="text-gray-400 text-xs ml-2">(Include acceptance criteria if needed)</span>
+          </label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            rows={4}
+            rows={6}
+            placeholder="As a [user type], I want [goal] so that [benefit].
+
+Description:
+[Detailed description]
+
+Acceptance Criteria:
+- [ ] Criterion 1
+- [ ] Criterion 2"
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>

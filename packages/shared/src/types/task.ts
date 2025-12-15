@@ -11,6 +11,9 @@ export interface Task {
   priority: number;
   created_at: Date;
   updated_at: Date;
+  // Additional fields for user stories (stored in description or metadata)
+  acceptance_criteria?: string[];
+  estimated_effort?: 'Low' | 'Medium' | 'High';
 }
 
 export interface CreateTaskRequest {
