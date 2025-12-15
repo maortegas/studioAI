@@ -20,17 +20,40 @@ export class ClaudeCLI extends EventEmitter {
       let command: string;
       let args: string[] = [];
 
-      // Note: This is a placeholder - actual Claude CLI commands may vary
-      // Adjust based on actual Claude CLI interface
+      // Execute in batch/non-interactive mode (no UI windows)
+      // IMPORTANT: Adjust flags based on actual Claude CLI interface
+      // Common flags: --batch, --non-interactive, --no-ui, --headless, --stdin
+      // See CLI_REFERENCE.md for details
       if (mode === 'plan') {
         command = 'claude';
-        args = ['plan', '--prompt', prompt, '--project', projectPath];
+        args = [
+          'plan',
+          '--batch',              // Batch mode - no interaction
+          '--non-interactive',    // Non-interactive execution
+          '--no-ui',              // Don't open UI windows
+          '--prompt', prompt,     // Pass the prompt (includes PRD)
+          '--project', projectPath
+        ];
       } else if (mode === 'patch') {
         command = 'claude';
-        args = ['patch', '--prompt', prompt, '--project', projectPath];
+        args = [
+          'patch',
+          '--batch',
+          '--non-interactive',
+          '--no-ui',
+          '--prompt', prompt,
+          '--project', projectPath
+        ];
       } else if (mode === 'review') {
         command = 'claude';
-        args = ['review', '--prompt', prompt, '--project', projectPath];
+        args = [
+          'review',
+          '--batch',
+          '--non-interactive',
+          '--no-ui',
+          '--prompt', prompt,
+          '--project', projectPath
+        ];
       } else {
         return reject(new Error(`Unsupported mode: ${mode}`));
       }
@@ -38,6 +61,8 @@ export class ClaudeCLI extends EventEmitter {
       const process = spawn(command, args, {
         cwd: projectPath,
         shell: true,
+        stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr - no inherit to prevent UI
+        detached: false, // Don't detach to prevent new windows
       });
 
       let output = '';

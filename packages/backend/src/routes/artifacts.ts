@@ -81,11 +81,17 @@ router.post('/architecture/generate', async (req: Request, res: Response) => {
     const { AIService } = await import('../services/aiService');
     const aiService = new AIService();
     
-    // Build prompt for architecture generation
+    // Build prompt bundle which includes PRD (idea del proyecto)
     const promptBundle = await aiService.buildPromptBundle(project_id);
+    
+    // Ensure PRD is included - if not found, warn but continue
+    if (!promptBundle.includes('Product Requirements Document') && !promptBundle.includes('PRD')) {
+      console.warn(`Warning: No PRD found for project ${project_id}. Architecture generation may be less accurate.`);
+    }
+    
     const architecturePrompt = `${promptBundle}
 
-Based on the above information, generate comprehensive architecture documentation including:
+Based on the above Product Requirements Document (PRD) and project information, generate comprehensive architecture documentation including:
 - System Architecture Overview
 - Technology Stack Details
 - Component Architecture

@@ -27,17 +27,30 @@ export class AIService {
 
     const bundle: string[] = [];
 
-    // Add PRD
+    // Add project basic info first
+    bundle.push('# Project Information\n');
+    bundle.push(`**Project Name**: ${project.name}\n`);
+    if (project.tech_stack) {
+      bundle.push(`**Tech Stack**: ${project.tech_stack}\n`);
+    }
+    bundle.push('\n');
+
+    // Add PRD (Idea del proyecto) - CRITICAL for architecture generation
     const prd = await this.artifactRepo.findByProjectIdAndType(projectId, 'prd');
     if (prd) {
       try {
         const prdContent = await readFile(prd.path);
-        bundle.push('## Product Requirements Document (PRD)\n');
+        bundle.push('# Product Requirements Document (PRD) - Idea del Proyecto\n');
         bundle.push(prdContent);
         bundle.push('\n');
       } catch (error) {
         console.warn('Could not read PRD:', error);
+        bundle.push('## Warning: PRD not found\n');
+        bundle.push('The Product Requirements Document (PRD) could not be loaded. Architecture generation may be less accurate.\n\n');
       }
+    } else {
+      bundle.push('## Warning: PRD not found\n');
+      bundle.push('No Product Requirements Document (PRD) exists for this project. Please create the PRD first for better architecture generation.\n\n');
     }
 
     // Add Architecture
