@@ -1,0 +1,21 @@
+{
+  "name": "@devflow-studio/worker",
+  "version": "1.0.0",
+  "main": "./dist/worker.js",
+  "scripts": {
+    "dev": "tsx watch src/worker.ts",
+    "build": "tsc",
+    "start": "node dist/worker.js",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@devflow-studio/shared": "*",
+    "dotenv": "^17.2.3",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
