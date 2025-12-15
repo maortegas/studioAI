@@ -109,13 +109,32 @@ export class ArtifactService {
     return await this.artifactRepo.create(data);
   }
 
-  async saveArchitecture(projectId: string, content: string): Promise<Artifact> {
+  async readArtifactFile(artifactId: string): Promise<string> {
+    const artifact = await this.artifactRepo.findById(artifactId);
+    if (!artifact) {
+      throw new Error('Artifact not found');
+    }
+
+    return await readFile(artifact.path);
+  }
+
+  async saveADR(projectId: string, content: string, adrNumber?: number): Promise<Artifact> {
     const project = await this.projectRepo.findById(projectId);
     if (!project) {
       throw new Error('Project not found');
     }
 
-    const filePath = path.join(project.base_path, 'artifacts', 'ARCHITECTURE.md');
+    // If adrNumber is provided, use it; otherwise, find the next available number
+    let adrNum = adrNumber;
+    if (adrNum === undefined) {
+      // Find all existing ADRs to determine next number
+      const existingADRs = await this.artifactRepo.findByProjectId(projectId);
+      const adrArtifacts = existingADRs.filter(a => a.type === 'adr');
+      adrNum = adrArtifacts.length + 1;
+    }
+
+    const fileName = `ADR-${adrNum.toString().padStart(3, '0')}.md`;
+    const filePath = path.join(project.base_path, 'artifacts', 'adr', fileName);
     
     if (!validatePath(filePath, project.base_path)) {
       throw new Error('Invalid file path');
@@ -124,30 +143,26 @@ export class ArtifactService {
     // Save to file system
     await createFile(filePath, content);
 
-    // Check if artifact already exists
-    const existing = await this.artifactRepo.findByProjectIdAndType(projectId, 'architecture');
-    
-    if (existing) {
-      // Update existing
-      return await this.artifactRepo.update(existing.id, { content }) || existing;
-    } else {
-      // Create new
-      return await this.artifactRepo.create({
-        project_id: projectId,
-        type: 'architecture',
-        path: filePath,
-        content: { content },
-      });
-    }
+    // Create new ADR (each ADR is a separate artifact)
+    return await this.artifactRepo.create({
+      project_id: projectId,
+      type: 'adr',
+      path: filePath,
+      content: { content, adrNumber: adrNum },
+    });
   }
 
-  async readArtifactFile(artifactId: string): Promise<string> {
-    const artifact = await this.artifactRepo.findById(artifactId);
-    if (!artifact) {
-      throw new Error('Artifact not found');
-    }
+  async getADRsByProject(projectId: string): Promise<Artifact[]> {
+    const artifacts = await this.artifactRepo.findByProjectId(projectId);
+    return artifacts.filter(a => a.type === 'adr').sort((a, b) => {
+      const aNum = (a.content as any)?.adrNumber || 0;
+      const bNum = (b.content as any)?.adrNumber || 0;
+      return aNum - bNum;
+    });
+  }
 
-    return await readFile(artifact.path);
+  async deleteADR(adrId: string): Promise<boolean> {
+    return await this.artifactRepo.delete(adrId);
   }
 }
 

@@ -20,67 +20,77 @@ export class CursorCLI extends EventEmitter {
       let command: string;
       let args: string[] = [];
 
-      // Execute in batch/non-interactive mode (no UI windows)
-      // IMPORTANT: Adjust flags based on actual Cursor CLI interface
-      // Common flags: --batch, --non-interactive, --no-ui, --headless, --stdin
-      // See CLI_REFERENCE.md for details
+      // Execute using cursor-agent CLI (installed via: curl https://cursor.com/install -fsS | bash)
+      // cursor-agent runs in background mode without opening the IDE
+      // The prompt includes the complete PRD (idea del proyecto)
+      console.log(`[Cursor CLI] Executing ${mode} mode with PRD context using cursor-agent`);
+      console.log(`[Cursor CLI] Prompt length: ${prompt.length} characters`);
+      
       if (mode === 'plan') {
-        command = 'cursor';
+        // Use cursor-agent CLI (installed via cursor.com/install)
+        // Based on help: cursor-agent [options] [command] [prompt...]
+        // Use --print for non-interactive mode (prints to console, no IDE)
+        command = 'cursor-agent';
         args = [
-          'plan',
-          '--batch',              // Batch mode - no interaction
-          '--non-interactive',    // Non-interactive execution
-          '--no-ui',              // Don't open UI windows
-          '--prompt', prompt,     // Pass the prompt (includes PRD)
-          '--project', projectPath
+          '--print',             // Print responses to console (non-interactive mode)
+          '--output-format', 'text', // Output as text
+          prompt,                // Pass the prompt as argument (includes complete PRD)
         ];
       } else if (mode === 'patch') {
-        command = 'cursor';
+        command = 'cursor-agent';
         args = [
-          'patch',
-          '--batch',
-          '--non-interactive',
-          '--no-ui',
-          '--prompt', prompt,
-          '--project', projectPath
+          '--print',
+          '--output-format', 'text',
+          prompt,
         ];
       } else if (mode === 'review') {
-        command = 'cursor';
+        command = 'cursor-agent';
         args = [
-          'review',
-          '--batch',
-          '--non-interactive',
-          '--no-ui',
-          '--prompt', prompt,
-          '--project', projectPath
+          '--print',
+          '--output-format', 'text',
+          prompt,
         ];
       } else {
         return reject(new Error(`Unsupported mode: ${mode}`));
       }
 
-      const process = spawn(command, args, {
-        cwd: projectPath,
-        shell: true,
-        stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr - no inherit to prevent UI
-        detached: false, // Don't detach to prevent new windows
+      // Log the command being executed for debugging
+      console.log(`[Cursor CLI] Command: ${command} ${args.join(' ').substring(0, 200)}...`);
+      
+      // Get process.env before creating the spawn process to avoid name conflict
+      const nodeProcess = require('process');
+      
+      // cursor-agent runs in background mode
+      // The working directory is set via spawn cwd option, not as argument
+      const env = {
+        ...nodeProcess.env,
+        PWD: projectPath, // Set PWD environment variable
+      };
+      
+      const childProcess = spawn(command, args, {
+        cwd: projectPath, // Set working directory here, not as --cwd argument
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'], // Capture stdout/stderr
+        detached: false,
+        env,
       });
 
       let output = '';
       let errorOutput = '';
 
-      process.stdout.on('data', (data) => {
+      childProcess.stdout.on('data', (data) => {
         const text = data.toString();
         output += text;
         this.emit('output', text);
       });
 
-      process.stderr.on('data', (data) => {
+      childProcess.stderr.on('data', (data) => {
         const text = data.toString();
         errorOutput += text;
         this.emit('error', text);
       });
 
-      process.on('close', (code) => {
+      childProcess.on('close', (code) => {
         if (code === 0) {
           resolve({
             success: true,
@@ -91,19 +101,19 @@ export class CursorCLI extends EventEmitter {
           resolve({
             success: false,
             output,
-            error: errorOutput || `Process exited with code ${code}`,
+            error: errorOutput || `cursor-agent exited with code ${code}`,
           });
         }
       });
 
-      process.on('error', (error) => {
+      childProcess.on('error', (error) => {
         reject(error);
       });
 
       // Timeout handling
       if (options.timeout) {
         setTimeout(() => {
-          process.kill();
+          childProcess.kill();
           reject(new Error('Command timeout'));
         }, options.timeout);
       }

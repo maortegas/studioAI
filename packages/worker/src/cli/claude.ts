@@ -21,66 +21,97 @@ export class ClaudeCLI extends EventEmitter {
       let args: string[] = [];
 
       // Execute in batch/non-interactive mode (no UI windows)
-      // IMPORTANT: Adjust flags based on actual Claude CLI interface
-      // Common flags: --batch, --non-interactive, --no-ui, --headless, --stdin
-      // See CLI_REFERENCE.md for details
+      // Claude CLI real commands - adjust based on actual CLI interface
+      // The prompt includes the complete PRD (idea del proyecto)
+      console.log(`[Claude CLI] Executing ${mode} mode with PRD context`);
+      console.log(`[Claude CLI] Prompt length: ${prompt.length} characters`);
+      
       if (mode === 'plan') {
+        // Use Claude CLI with headless mode
         command = 'claude';
         args = [
-          'plan',
-          '--batch',              // Batch mode - no interaction
-          '--non-interactive',    // Non-interactive execution
-          '--no-ui',              // Don't open UI windows
-          '--prompt', prompt,     // Pass the prompt (includes PRD)
-          '--project', projectPath
+          '--headless',           // Headless mode - no GUI
+          '--no-gui',             // Explicitly disable GUI
+          '--batch',              // Batch mode
+          '--non-interactive',    // Non-interactive
+          mode,
+          '--prompt', prompt,     // Complete PRD included here
+          '--project', projectPath,
+          '--output', 'stdout'    // Output to stdout instead of file
         ];
       } else if (mode === 'patch') {
         command = 'claude';
         args = [
-          'patch',
+          '--headless',
+          '--no-gui',
           '--batch',
           '--non-interactive',
-          '--no-ui',
+          mode,
           '--prompt', prompt,
-          '--project', projectPath
+          '--project', projectPath,
+          '--output', 'stdout'
         ];
       } else if (mode === 'review') {
         command = 'claude';
         args = [
-          'review',
+          '--headless',
+          '--no-gui',
           '--batch',
           '--non-interactive',
-          '--no-ui',
+          mode,
           '--prompt', prompt,
-          '--project', projectPath
+          '--project', projectPath,
+          '--output', 'stdout'
         ];
       } else {
         return reject(new Error(`Unsupported mode: ${mode}`));
       }
 
-      const process = spawn(command, args, {
+      // Log the command being executed for debugging
+      console.log(`[Claude CLI] Command: ${command} ${args.join(' ').substring(0, 200)}...`);
+      
+      // Get process.env before creating the spawn process to avoid name conflict
+      const nodeProcess = require('process');
+      
+      // Set environment variables to force headless mode
+      const env = {
+        ...nodeProcess.env,
+        CLAUDE_BATCH_MODE: '1',
+        CLAUDE_NON_INTERACTIVE: '1',
+        CLAUDE_NO_UI: '1',
+        CLAUDE_HEADLESS: '1',
+        CLAUDE_CLI_MODE: '1',
+        DISPLAY: '', // Unset DISPLAY on Linux to prevent GUI
+        // On macOS, try to prevent GUI
+        ...(process.platform === 'darwin' && {
+          __CF_USER_TEXT_ENCODING: nodeProcess.env.__CF_USER_TEXT_ENCODING || '0x1F5:0x0:0x0',
+        }),
+      };
+      
+      const childProcess = spawn(command, args, {
         cwd: projectPath,
-        shell: true,
-        stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr - no inherit to prevent UI
+        shell: false, // Don't use shell to have more control
+        stdio: ['ignore', 'pipe', 'pipe'], // Ignore stdin, capture stdout/stderr
         detached: false, // Don't detach to prevent new windows
+        env,
       });
 
       let output = '';
       let errorOutput = '';
 
-      process.stdout.on('data', (data) => {
+      childProcess.stdout.on('data', (data) => {
         const text = data.toString();
         output += text;
         this.emit('output', text);
       });
 
-      process.stderr.on('data', (data) => {
+      childProcess.stderr.on('data', (data) => {
         const text = data.toString();
         errorOutput += text;
         this.emit('error', text);
       });
 
-      process.on('close', (code) => {
+      childProcess.on('close', (code) => {
         if (code === 0) {
           resolve({
             success: true,
@@ -96,14 +127,14 @@ export class ClaudeCLI extends EventEmitter {
         }
       });
 
-      process.on('error', (error) => {
+      childProcess.on('error', (error) => {
         reject(error);
       });
 
       // Timeout handling
       if (options.timeout) {
         setTimeout(() => {
-          process.kill();
+          childProcess.kill();
           reject(new Error('Command timeout'));
         }, options.timeout);
       }

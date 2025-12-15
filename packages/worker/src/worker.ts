@@ -79,9 +79,24 @@ async function processJob(jobId: string) {
 
     let cli;
     if (provider === 'cursor') {
+      // Use cursor-agent CLI (installed via: curl https://cursor.com/install -fsS | bash)
+      // cursor-agent --background runs without opening the IDE
       cli = new CursorCLI();
+      console.log('[Worker] Usando cursor-agent CLI (modo background, no abre IDE)');
     } else if (provider === 'claude') {
-      cli = new ClaudeCLI();
+      // Intentar usar Claude API primero (no abre IDE), fallback a CLI
+      const { ClaudeAPI } = await import('./cli/claudeApi');
+      const claudeApi = new ClaudeAPI();
+      
+      // Si tiene API key, usar API (no abre IDE)
+      if (process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY) {
+        console.log('[Worker] Usando Claude API (no abre IDE)');
+        cli = claudeApi;
+      } else {
+        // Fallback a CLI (puede abrir IDE)
+        console.warn('[Worker] No Claude API key encontrada, usando CLI (puede abrir IDE)');
+        cli = new ClaudeCLI();
+      }
     } else {
       throw new Error(`Unsupported provider: ${provider}`);
     }
@@ -95,8 +110,18 @@ async function processJob(jobId: string) {
       jobRepo.addEvent(jobId, 'error', { error: data });
     });
 
-    // Execute CLI command
+    // Execute CLI command with complete PRD in prompt
+    // The prompt contains the full PRD (idea del proyecto) as context
+    console.log(`[Worker] Executing ${provider} CLI command for job ${jobId}`);
+    console.log(`[Worker] Prompt includes PRD: ${prompt.includes('PRD') || prompt.includes('Product Requirements Document')}`);
+    console.log(`[Worker] Prompt length: ${prompt.length} characters`);
+    
     const result = await cli.execute(mode, prompt, projectPath, { timeout: 300000 }); // 5 min timeout
+    
+    console.log(`[Worker] CLI execution completed. Success: ${result.success}`);
+    if (result.output) {
+      console.log(`[Worker] Output length: ${result.output.length} characters`);
+    }
 
     // Update status
     if (result.success) {

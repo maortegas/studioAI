@@ -73,6 +73,41 @@ docker compose down
 
 **Nota:** Los datos se persisten en un volumen de Docker llamado `postgres_data`, por lo que no se perderán al detener el contenedor.
 
+### Configuración de IA
+
+#### Opción 1: cursor-agent (Recomendado para Cursor)
+
+Instala `cursor-agent`, el CLI oficial de Cursor:
+
+```bash
+curl https://cursor.com/install -fsS | bash
+```
+
+Verifica la instalación:
+```bash
+which cursor-agent
+```
+
+**Ventajas:**
+- ✅ No abre el IDE de Cursor
+- ✅ Ejecuta comandos de IA directamente
+- ✅ Funciona en modo batch/background
+
+#### Opción 2: Claude API (Alternativa)
+
+Para usar Claude API directamente (sin cursor-agent):
+
+```bash
+export CLAUDE_API_KEY="tu-api-key-de-anthropic"
+```
+
+**Ventajas:**
+- ✅ No requiere cursor-agent
+- ✅ Ejecución más rápida
+- ✅ Funciona completamente en modo batch
+
+**Nota:** El sistema usa `cursor-agent` por defecto si está instalado. Si no, usa Claude API si está configurada.
+
 ### Ejecutar en Desarrollo
 
 ```bash

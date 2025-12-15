@@ -54,4 +54,31 @@ export const artifactsApi = {
     });
     return response.data;
   },
+
+  // ADR methods
+  getADRs: async (projectId: string): Promise<Artifact[]> => {
+    const response = await apiClient.get(`/artifacts/project/${projectId}/adr`);
+    return response.data;
+  },
+
+  saveADR: async (projectId: string, content: string, adrNumber?: number): Promise<Artifact> => {
+    const response = await apiClient.post('/artifacts/adr', {
+      project_id: projectId,
+      content,
+      adr_number: adrNumber,
+    });
+    return response.data;
+  },
+
+  generateADR: async (projectId: string, decisionContext?: string): Promise<{ job_id: string; adr_number: number; message: string }> => {
+    const response = await apiClient.post('/artifacts/adr/generate', {
+      project_id: projectId,
+      decision_context: decisionContext,
+    });
+    return response.data;
+  },
+
+  deleteADR: async (adrId: string): Promise<void> => {
+    await apiClient.delete(`/artifacts/adr/${adrId}`);
+  },
 };
