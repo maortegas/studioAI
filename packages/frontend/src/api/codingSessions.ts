@@ -32,6 +32,26 @@ export const codingSessionsApi = {
     return response.data;
   },
 
+  pauseSession: async (sessionId: string) => {
+    const response = await apiClient.post(`/coding-sessions/${sessionId}/pause`);
+    return response.data;
+  },
+
+  resumeSession: async (sessionId: string) => {
+    const response = await apiClient.post(`/coding-sessions/${sessionId}/resume`);
+    return response.data;
+  },
+
+  deleteSession: async (sessionId: string) => {
+    const response = await apiClient.delete(`/coding-sessions/${sessionId}`);
+    return response.data;
+  },
+
+  retrySession: async (sessionId: string): Promise<{ session: CodingSession; message: string }> => {
+    const response = await apiClient.post(`/coding-sessions/${sessionId}/retry`);
+    return response.data;
+  },
+
   // Connect to SSE stream for real-time updates
   connectStream: (sessionId: string, onEvent: (event: any) => void, onError?: (error: any) => void) => {
     const eventSource = new EventSource(`${apiClient.defaults.baseURL}/coding-sessions/stream/${sessionId}`);

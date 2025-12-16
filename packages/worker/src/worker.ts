@@ -105,6 +105,20 @@ async function processJob(jobId: string) {
     const codingSessionId = job.args.coding_session_id;
     const isCodingSession = mode === 'agent' && codingSessionId;
 
+    // Check if coding session is paused
+    if (isCodingSession) {
+      const sessionCheck = await pool.query(
+        'SELECT status FROM coding_sessions WHERE id = $1',
+        [codingSessionId]
+      );
+      
+      if (sessionCheck.rows.length > 0 && sessionCheck.rows[0].status === 'paused') {
+        console.log(`[Worker] Coding session ${codingSessionId} is paused, skipping job ${jobId}`);
+        // Keep job as pending so it can be picked up later if resumed
+        return;
+      }
+    }
+
     // Update coding session status to running
     if (isCodingSession) {
       await pool.query(
@@ -374,8 +388,15 @@ async function processJob(jobId: string) {
 // Poll for pending jobs
 async function pollJobs() {
   try {
+    // Get pending jobs, excluding those with paused coding sessions
     const result = await pool.query(
-      "SELECT id FROM ai_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+      `SELECT aj.id 
+       FROM ai_jobs aj
+       LEFT JOIN coding_sessions cs ON cs.ai_job_id = aj.id
+       WHERE aj.status = 'pending' 
+       AND (cs.id IS NULL OR cs.status != 'paused')
+       ORDER BY aj.created_at ASC 
+       LIMIT 1`
     );
 
     if (result.rows.length > 0) {

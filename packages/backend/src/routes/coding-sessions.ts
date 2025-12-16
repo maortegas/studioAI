@@ -87,6 +87,54 @@ router.get('/project/:projectId', async (req: Request, res: Response) => {
   }
 });
 
+// Pause a session
+router.post('/:sessionId/pause', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.params.sessionId;
+    await sessionService.pauseSession(sessionId);
+    res.json({ message: 'Session paused successfully' });
+  } catch (error: any) {
+    console.error('Error pausing session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Resume a session
+router.post('/:sessionId/resume', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.params.sessionId;
+    await sessionService.resumeSession(sessionId);
+    res.json({ message: 'Session resumed successfully' });
+  } catch (error: any) {
+    console.error('Error resuming session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete/Cancel a session
+router.delete('/:sessionId', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.params.sessionId;
+    await sessionService.deleteSession(sessionId);
+    res.json({ message: 'Session deleted successfully' });
+  } catch (error: any) {
+    console.error('Error deleting session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Retry a failed session
+router.post('/:sessionId/retry', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const newSession = await sessionService.retrySession(sessionId);
+    res.json({ session: newSession, message: 'Session retried successfully' });
+  } catch (error: any) {
+    console.error('Error retrying session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Server-Sent Events endpoint for real-time updates
 router.get('/stream/:sessionId', async (req: Request, res: Response) => {
   const sessionId = req.params.sessionId;

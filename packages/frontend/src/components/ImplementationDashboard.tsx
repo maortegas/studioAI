@@ -84,6 +84,53 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
     }
   };
 
+  const handlePauseSession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    try {
+      await codingSessionsApi.pauseSession(sessionId);
+      showToast('Session paused', 'success');
+      await loadDashboard();
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Failed to pause session', 'error');
+    }
+  };
+
+  const handleResumeSession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    try {
+      await codingSessionsApi.resumeSession(sessionId);
+      showToast('Session resumed', 'success');
+      await loadDashboard();
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Failed to resume session', 'error');
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!confirm('Are you sure you want to cancel/delete this session?')) {
+      return;
+    }
+    try {
+      await codingSessionsApi.deleteSession(sessionId);
+      showToast('Session deleted', 'success');
+      await loadDashboard();
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Failed to delete session', 'error');
+    }
+  };
+
+  const handleRetrySession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    try {
+      const result = await codingSessionsApi.retrySession(sessionId);
+      showToast(result.message, 'success');
+      await loadDashboard();
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Failed to retry session', 'error');
+    }
+  };
+
   const getStorySession = (storyId: string): CodingSession | undefined => {
     return dashboard?.sessions.find((s) => s.story_id === storyId);
   };
@@ -117,7 +164,9 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
   }
 
   const availableStories = stories.filter((story) => !getStorySession(story.id));
-  const activeSessions = dashboard?.sessions.filter((s) => s.status === 'running' || s.status === 'pending') || [];
+  const activeSessions = dashboard?.sessions.filter((s) => 
+    s.status === 'running' || s.status === 'pending' || s.status === 'paused'
+  ) || [];
 
   return (
     <div className="space-y-6">
@@ -159,11 +208,10 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
               return (
                 <div
                   key={session.id}
-                  className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition cursor-pointer"
-                  onClick={() => setViewingSession(session)}
+                  className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
                 >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex-1 cursor-pointer" onClick={() => setViewingSession(session)}>
                       <div className="flex items-center space-x-2 mb-2">
                         <span className={`px-2 py-1 text-xs rounded-full font-medium ${getProgrammerBadge(session.programmer_type)}`}>
                           {session.programmer_type}
@@ -177,9 +225,57 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                         <p className="text-xs text-gray-500 mt-1 font-mono">📄 {session.current_file}</p>
                       )}
                     </div>
-                    <div className="text-right ml-4">
-                      <div className="text-2xl font-bold text-gray-900">{session.progress}%</div>
-                      <div className="text-xs text-gray-500">progress</div>
+                    <div className="flex items-center space-x-2 ml-4">
+                      <div className="text-right mr-2">
+                        <div className="text-2xl font-bold text-gray-900">{session.progress}%</div>
+                        <div className="text-xs text-gray-500">progress</div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {session.status === 'running' && (
+                          <button
+                            onClick={(e) => handlePauseSession(session.id, e)}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-yellow-100 text-yellow-700 hover:bg-yellow-200 rounded-lg transition border border-yellow-300"
+                            title="Pause session"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Pause</span>
+                          </button>
+                        )}
+                        {session.status === 'paused' && (
+                          <button
+                            onClick={(e) => handleResumeSession(session.id, e)}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition border border-green-300"
+                            title="Resume session"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Resume</span>
+                          </button>
+                        )}
+                        {session.status === 'pending' && (
+                          <span className="flex items-center space-x-1 px-3 py-2 text-sm bg-blue-100 text-blue-700 rounded-lg border border-blue-300">
+                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span>Waiting...</span>
+                          </span>
+                        )}
+                        <button
+                          onClick={(e) => handleDeleteSession(session.id, e)}
+                          className="flex items-center space-x-1 px-3 py-2 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg transition border border-red-300"
+                          title="Cancel/Delete session"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          <span>Cancel</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div className="mt-3">
@@ -188,6 +284,8 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                         className={`h-2 rounded-full transition-all duration-500 ${
                           session.status === 'running'
                             ? 'bg-gradient-to-r from-blue-500 to-green-500'
+                            : session.status === 'paused'
+                            ? 'bg-yellow-500'
                             : 'bg-gray-400'
                         }`}
                         style={{ width: `${session.progress}%` }}
@@ -267,11 +365,10 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                   return (
                     <div
                       key={session.id}
-                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition cursor-pointer"
-                      onClick={() => setViewingSession(session)}
+                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
                     >
                       <div className="flex justify-between items-center">
-                        <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-3 flex-1 cursor-pointer" onClick={() => setViewingSession(session)}>
                           <span className={`px-2 py-1 text-xs rounded-full font-medium ${getProgrammerBadge(session.programmer_type)}`}>
                             {session.programmer_type}
                           </span>
@@ -280,8 +377,31 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                           </span>
                           <span className="font-medium text-gray-900">{story?.title || 'Unknown Story'}</span>
                         </div>
-                        <div className="text-xs text-gray-500">
-                          {session.completed_at && new Date(session.completed_at).toLocaleString()}
+                        <div className="flex items-center space-x-3">
+                          <div className="text-xs text-gray-500">
+                            {session.completed_at && new Date(session.completed_at).toLocaleString()}
+                          </div>
+                          {session.status === 'failed' && (
+                            <button
+                              onClick={(e) => handleRetrySession(session.id, e)}
+                              className="flex items-center space-x-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              <span>Retry</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => handleDeleteSession(session.id, e)}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg transition border border-red-300"
+                            title="Delete"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            <span>Delete</span>
+                          </button>
                         </div>
                       </div>
                     </div>

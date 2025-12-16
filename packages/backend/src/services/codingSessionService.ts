@@ -206,6 +206,113 @@ export class CodingSessionService {
   }
 
   /**
+   * Pause a running session
+   */
+  async pauseSession(sessionId: string): Promise<void> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    if (session.status !== 'running') {
+      throw new Error('Only running sessions can be paused');
+    }
+
+    await this.sessionRepo.update(sessionId, {
+      status: 'paused',
+    });
+
+    // Add event
+    await this.sessionRepo.addEvent(sessionId, 'progress', {
+      message: 'Session paused by user',
+    });
+  }
+
+  /**
+   * Resume a paused session
+   */
+  async resumeSession(sessionId: string): Promise<void> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    if (session.status !== 'paused') {
+      throw new Error('Only paused sessions can be resumed');
+    }
+
+    // For now, we'll mark it as pending so the worker can pick it up again
+    // In a real implementation, you'd need to handle resume logic in the worker
+    await this.sessionRepo.update(sessionId, {
+      status: 'pending',
+    });
+
+    // Add event
+    await this.sessionRepo.addEvent(sessionId, 'progress', {
+      message: 'Session resumed by user',
+    });
+  }
+
+  /**
+   * Delete/Cancel a session
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    // If session is running, mark as cancelled instead of deleting
+    if (session.status === 'running' || session.status === 'pending') {
+      await this.sessionRepo.update(sessionId, {
+        status: 'failed',
+        error: 'Cancelled by user',
+        completed_at: new Date(),
+      });
+
+      // Add event
+      await this.sessionRepo.addEvent(sessionId, 'error', {
+        error: 'Session cancelled by user',
+      });
+    } else {
+      // Delete completed/failed sessions
+      await this.sessionRepo.delete(sessionId);
+    }
+  }
+
+  /**
+   * Retry a failed session
+   */
+  async retrySession(sessionId: string): Promise<CodingSession> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    if (session.status !== 'failed') {
+      throw new Error('Only failed sessions can be retried');
+    }
+
+    // Get the original story
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) {
+      throw new Error('Story not found');
+    }
+
+    // Create a new session
+    const newSession = await this.createSession({
+      project_id: session.project_id,
+      story_id: session.story_id,
+      programmer_type: session.programmer_type,
+    });
+
+    // Delete the old failed session
+    await this.sessionRepo.delete(sessionId);
+
+    return newSession;
+  }
+
+  /**
    * Build coding prompt based on story and programmer type
    */
   private buildCodingPrompt(story: any, programmerType: ProgrammerType): string {
