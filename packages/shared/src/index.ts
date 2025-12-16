@@ -8,4 +8,5 @@ export * from './types/roadmap';
 export * from './types/coding-session';
 export * from './types/qa';
 export * from './types/test-suite';
+export * from './types/release';
 

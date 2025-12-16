@@ -245,14 +245,61 @@ router.get('/project/:projectId', async (req: Request, res: Response) => {
     });
 
     // Release stage
+    const releaseSummary = await pool.query(
+      `SELECT 
+        COUNT(*) as total_releases,
+        COUNT(*) FILTER (WHERE status = 'published') as published_releases
+      FROM releases
+      WHERE project_id = $1`,
+      [projectId]
+    );
+    const totalReleases = parseInt(releaseSummary.rows[0]?.total_releases || '0');
+    const publishedReleases = parseInt(releaseSummary.rows[0]?.published_releases || '0');
+    
+    let releaseStatus: 'not_started' | 'in_progress' | 'blocked' | 'done' = 'not_started';
+    let releaseCompletion = 0;
+    const releaseChecklist = [];
+    let releaseNextAction = 'Create your first release';
+    
+    if (totalReleases > 0) {
+      releaseStatus = publishedReleases > 0 ? 'done' : 'in_progress';
+      releaseCompletion = publishedReleases > 0 ? 100 : Math.min(50, totalReleases * 25);
+      
+      releaseChecklist.push({
+        id: '1',
+        label: `${totalReleases} release(s) created`,
+        completed: true,
+      });
+      
+      if (publishedReleases > 0) {
+        releaseChecklist.push({
+          id: '2',
+          label: `${publishedReleases} release(s) published`,
+          completed: true,
+        });
+        releaseNextAction = 'Release stage completed';
+      } else {
+        releaseChecklist.push({
+          id: '2',
+          label: 'Publish a release',
+          completed: false,
+        });
+        releaseNextAction = 'Publish a release to complete this stage';
+      }
+    } else {
+      releaseChecklist.push({
+        id: '1',
+        label: 'Create a release',
+        completed: false,
+      });
+    }
+    
     stages.push({
       name: 'release',
-      status: 'not_started',
-      completion: 0,
-      checklist: [
-        { id: '1', label: 'Release prepared', completed: false },
-      ],
-      next_action: 'Prepare release',
+      status: releaseStatus,
+      completion: releaseCompletion,
+      checklist: releaseChecklist,
+      next_action: releaseNextAction,
     });
 
     res.json(stages);
