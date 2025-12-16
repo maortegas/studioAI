@@ -103,6 +103,11 @@ export class AIService {
       throw new Error('Project not found');
     }
 
+    // Combine prompt bundle with additional prompt if provided
+    const finalPrompt = request.prompt 
+      ? `${promptBundle}\n\n${request.prompt}`
+      : promptBundle;
+
     // Determine command based on provider
     let command: string;
     let args: Record<string, any> = {};
@@ -111,7 +116,7 @@ export class AIService {
       command = 'cursor';
       args = {
         mode: request.mode,
-        prompt: request.prompt || promptBundle,
+        prompt: finalPrompt,
         project_id: request.project_id,
         project_path: project.base_path,
         task_id: request.task_id,
@@ -120,7 +125,7 @@ export class AIService {
       command = 'claude';
       args = {
         mode: request.mode,
-        prompt: request.prompt || promptBundle,
+        prompt: finalPrompt,
         project_id: request.project_id,
         project_path: project.base_path,
         task_id: request.task_id,

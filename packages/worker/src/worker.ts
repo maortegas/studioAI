@@ -128,11 +128,11 @@ async function processJob(jobId: string) {
       await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
       await jobRepo.addEvent(jobId, 'completed', { output: result.output });
       
-      // If this is an architecture generation job, save it automatically
-      // Check if the job args contain architecture generation context
+      // Auto-save artifacts based on job type
       const jobArgs = job.args || {};
       const prompt = jobArgs.prompt || '';
       
+      // Save Architecture
       if (prompt.includes('architecture documentation') || prompt.includes('Architecture') || 
           prompt.includes('System Architecture Overview')) {
         try {
@@ -174,6 +174,93 @@ async function processJob(jobId: string) {
           // Don't fail the job if auto-save fails
         }
       }
+      
+      // Save Roadmap
+      if (prompt.includes('create a roadmap') || prompt.includes('roadmap with milestones') ||
+          prompt.includes('Roadmap') || prompt.includes('milestone')) {
+        try {
+          const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [job.project_id]);
+          if (projectResult.rows.length > 0) {
+            const project = projectResult.rows[0];
+            const roadmapPath = path.join(project.base_path, 'artifacts', 'ROADMAP.md');
+            
+            // Ensure artifacts directory exists
+            await fs.mkdir(path.dirname(roadmapPath), { recursive: true });
+            
+            // Parse milestones from AI output
+            const milestones = parseRoadmapMilestones(result.output);
+            
+            // Create milestones as tasks
+            const createdMilestones: any[] = [];
+            for (const milestone of milestones) {
+              const taskResult = await pool.query(
+                `INSERT INTO tasks (project_id, title, description, type, status, priority)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 RETURNING *`,
+                [
+                  job.project_id,
+                  milestone.title,
+                  milestone.description,
+                  'milestone',
+                  milestone.status || 'todo',
+                  milestone.priority || 0
+                ]
+              );
+              createdMilestones.push({
+                ...milestone,
+                id: taskResult.rows[0].id
+              });
+            }
+            
+            // Create roadmap content
+            const roadmapContent = {
+              project_id: job.project_id,
+              title: 'Project Roadmap',
+              description: 'Generated roadmap based on user stories',
+              milestones: createdMilestones.map(m => ({
+                id: m.id,
+                title: m.title,
+                description: m.description,
+                status: m.status || 'todo',
+                priority: m.priority || 0,
+                targetDate: m.targetDate,
+                dependencies: m.dependencies || []
+              }))
+            };
+            
+            // Generate markdown
+            const markdownContent = generateRoadmapMarkdown(roadmapContent, result.output);
+            
+            // Save roadmap file
+            await fs.writeFile(roadmapPath, markdownContent, 'utf8');
+            
+            // Save to database
+            const artifactResult = await pool.query(
+              `INSERT INTO artifacts (project_id, type, path, content)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT DO NOTHING
+               RETURNING *`,
+              [job.project_id, 'roadmap', 'artifacts/ROADMAP.md', JSON.stringify(roadmapContent)]
+            );
+            
+            // If artifact already exists, update it
+            if (artifactResult.rows.length === 0) {
+              await pool.query(
+                `UPDATE artifacts 
+                 SET content = $1, path = $2 
+                 WHERE project_id = $3 AND type = 'roadmap'`,
+                [JSON.stringify(roadmapContent), 'artifacts/ROADMAP.md', job.project_id]
+              );
+            }
+            
+            console.log(`Roadmap saved automatically for project ${job.project_id} with ${createdMilestones.length} milestones`);
+          }
+        } catch (error: any) {
+          console.error(`Failed to auto-save roadmap: ${error.message}`);
+          console.error(error.stack);
+          // Don't fail the job if auto-save fails
+        }
+      }
     } else {
       await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
       await jobRepo.addEvent(jobId, 'failed', { error: result.error });
@@ -202,6 +289,125 @@ async function pollJobs() {
 
   // Poll again after 2 seconds
   setTimeout(pollJobs, 2000);
+}
+
+// Helper function to parse roadmap milestones from AI output
+function parseRoadmapMilestones(output: string): any[] {
+  const milestones: any[] = [];
+  
+  // Try to extract milestones from markdown headers
+  const lines = output.split('\n');
+  let currentMilestone: any = null;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Detect milestone headers (## or ###)
+    if (line.match(/^#{2,3}\s+(.+)/)) {
+      if (currentMilestone) {
+        milestones.push(currentMilestone);
+      }
+      
+      const title = line.replace(/^#{2,3}\s+/, '').trim();
+      currentMilestone = {
+        title,
+        description: '',
+        status: 'todo',
+        priority: milestones.length,
+        dependencies: []
+      };
+    } 
+    // Parse milestone properties
+    else if (currentMilestone) {
+      // Status
+      if (line.match(/status:\s*(.+)/i)) {
+        const status = line.match(/status:\s*(.+)/i)?.[1]?.trim().toLowerCase();
+        if (status === 'done' || status === 'completed') currentMilestone.status = 'done';
+        else if (status === 'in progress' || status === 'in_progress') currentMilestone.status = 'in_progress';
+        else if (status === 'blocked') currentMilestone.status = 'blocked';
+      }
+      // Priority
+      else if (line.match(/priority:\s*(\d+)/i)) {
+        currentMilestone.priority = parseInt(line.match(/priority:\s*(\d+)/i)?.[1] || '0');
+      }
+      // Target date
+      else if (line.match(/target date:\s*(.+)/i) || line.match(/date:\s*(.+)/i)) {
+        const dateStr = line.match(/(?:target )?date:\s*(.+)/i)?.[1]?.trim();
+        if (dateStr) currentMilestone.targetDate = dateStr;
+      }
+      // Dependencies
+      else if (line.match(/dependencies:\s*(.+)/i)) {
+        const deps = line.match(/dependencies:\s*(.+)/i)?.[1]?.split(',').map(d => d.trim()) || [];
+        currentMilestone.dependencies = deps;
+      }
+      // Description (accumulate non-property lines)
+      else if (line && !line.startsWith('#') && !line.startsWith('-') && !line.startsWith('*')) {
+        if (currentMilestone.description) {
+          currentMilestone.description += '\n' + line;
+        } else {
+          currentMilestone.description = line;
+        }
+      }
+    }
+  }
+  
+  // Add last milestone
+  if (currentMilestone) {
+    milestones.push(currentMilestone);
+  }
+  
+  // If no milestones found, create at least one default
+  if (milestones.length === 0) {
+    milestones.push({
+      title: 'Project Phase 1',
+      description: 'Initial development phase',
+      status: 'todo',
+      priority: 0,
+      dependencies: []
+    });
+  }
+  
+  return milestones;
+}
+
+// Helper function to generate roadmap markdown
+function generateRoadmapMarkdown(roadmapContent: any, aiOutput: string): string {
+  const lines: string[] = [];
+  
+  lines.push(`# ${roadmapContent.title}\n`);
+  
+  if (roadmapContent.description) {
+    lines.push(`${roadmapContent.description}\n`);
+  }
+  
+  lines.push('\n## AI-Generated Roadmap\n');
+  lines.push(aiOutput);
+  lines.push('\n\n---\n');
+  
+  lines.push('\n## Milestones Overview\n');
+  
+  for (const milestone of roadmapContent.milestones) {
+    lines.push(`### ${milestone.title}\n`);
+    
+    if (milestone.description) {
+      lines.push(`${milestone.description}\n`);
+    }
+    
+    lines.push(`- **Status**: ${milestone.status}`);
+    lines.push(`- **Priority**: ${milestone.priority}`);
+    
+    if (milestone.targetDate) {
+      lines.push(`- **Target Date**: ${milestone.targetDate}`);
+    }
+    
+    if (milestone.dependencies && milestone.dependencies.length > 0) {
+      lines.push(`- **Dependencies**: ${milestone.dependencies.join(', ')}`);
+    }
+    
+    lines.push('');
+  }
+  
+  return lines.join('\n');
 }
 
 // Start polling

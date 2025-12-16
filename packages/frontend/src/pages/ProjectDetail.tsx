@@ -8,12 +8,13 @@ import StageTracker from '../components/StageTracker';
 import AIJobRunner from '../components/AIJobRunner';
 import ArchitectureManager from '../components/ArchitectureManager';
 import UserStoriesManager from '../components/UserStoriesManager';
+import RoadmapView from '../components/RoadmapView';
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'prd' | 'design' | 'stories' | 'stages' | 'tasks' | 'ai'>(
+  const [activeTab, setActiveTab] = useState<'overview' | 'prd' | 'design' | 'stories' | 'roadmap' | 'stages' | 'tasks' | 'ai'>(
     'overview'
   );
   const [loading, setLoading] = useState(true);
@@ -65,7 +66,7 @@ export default function ProjectDetail() {
 
       <div className="border-b border-gray-200 mb-6">
         <nav className="flex space-x-8">
-          {(['overview', 'prd', 'design', 'stories', 'stages', 'tasks', 'ai'] as const).map((tab) => (
+          {(['overview', 'prd', 'design', 'stories', 'roadmap', 'stages', 'tasks', 'ai'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -112,6 +113,8 @@ export default function ProjectDetail() {
         {activeTab === 'design' && <ArchitectureManager projectId={project.id} />}
 
         {activeTab === 'stories' && <UserStoriesManager projectId={project.id} />}
+
+        {activeTab === 'roadmap' && <RoadmapView projectId={project.id} />}
 
         {activeTab === 'stages' && <StageTracker projectId={project.id} />}
 
