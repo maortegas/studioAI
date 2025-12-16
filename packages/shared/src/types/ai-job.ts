@@ -1,5 +1,5 @@
 export type AIProvider = 'cursor' | 'claude';
-export type AIMode = 'plan' | 'patch' | 'review';
+export type AIMode = 'plan' | 'patch' | 'review' | 'agent';
 export type AIJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface AIJob {

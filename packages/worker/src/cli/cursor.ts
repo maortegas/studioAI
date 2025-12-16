@@ -36,6 +36,15 @@ export class CursorCLI extends EventEmitter {
           '--output-format', 'text', // Output as text
           prompt,                // Pass the prompt as argument (includes complete PRD)
         ];
+      } else if (mode === 'agent') {
+        // Agent mode for autonomous coding tasks
+        // Uses cursor-agent in interactive mode to generate and modify code
+        command = 'cursor-agent';
+        args = [
+          '--print',             // Print responses to console
+          '--output-format', 'text',
+          prompt,                // Coding task prompt
+        ];
       } else if (mode === 'patch') {
         command = 'cursor-agent';
         args = [

@@ -5,4 +5,5 @@ export * from './types/artifact';
 export * from './types/stage';
 export * from './types/run';
 export * from './types/roadmap';
+export * from './types/coding-session';
 

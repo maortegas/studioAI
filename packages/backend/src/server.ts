@@ -10,6 +10,7 @@ import eventsRouter from './routes/events';
 import stagesRouter from './routes/stages';
 import roadmapRouter from './routes/roadmap';
 import architectureRouter from './routes/architecture';
+import codingSessionsRouter from './routes/coding-sessions';
 import { validateProjectPath } from './middleware/validation';
 import { auditLog } from './middleware/audit';
 
@@ -32,6 +33,7 @@ app.use('/api/events', eventsRouter);
 app.use('/api/stages', stagesRouter);
 app.use('/api/roadmap', roadmapRouter);
 app.use('/api/architecture', architectureRouter);
+app.use('/api/coding-sessions', codingSessionsRouter);
 
 // Health check
 app.get('/health', (req, res) => {

@@ -101,13 +101,61 @@ async function processJob(jobId: string) {
       throw new Error(`Unsupported provider: ${provider}`);
     }
 
+    // Check if this is a coding session job
+    const codingSessionId = job.args.coding_session_id;
+    const isCodingSession = mode === 'agent' && codingSessionId;
+
+    // Update coding session status to running
+    if (isCodingSession) {
+      await pool.query(
+        'UPDATE coding_sessions SET status = $1, started_at = $2 WHERE id = $3',
+        ['running', new Date(), codingSessionId]
+      );
+      console.log(`[Worker] Coding session ${codingSessionId} started`);
+    }
+
     // Set up event handlers
-    cli.on('output', (data: string) => {
-      jobRepo.addEvent(jobId, 'progress', { output: data });
+    cli.on('output', async (data: string) => {
+      await jobRepo.addEvent(jobId, 'progress', { output: data });
+      
+      // Update coding session with output
+      if (isCodingSession) {
+        try {
+          const result = await pool.query(
+            'SELECT output FROM coding_sessions WHERE id = $1',
+            [codingSessionId]
+          );
+          const currentOutput = result.rows[0]?.output || '';
+          await pool.query(
+            'UPDATE coding_sessions SET output = $1 WHERE id = $2',
+            [currentOutput + data, codingSessionId]
+          );
+          
+          // Add event to coding_session_events
+          await pool.query(
+            'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+            [codingSessionId, 'output', JSON.stringify({ output: data })]
+          );
+        } catch (error) {
+          console.error('[Worker] Error updating coding session output:', error);
+        }
+      }
     });
 
-    cli.on('error', (data: string) => {
-      jobRepo.addEvent(jobId, 'error', { error: data });
+    cli.on('error', async (data: string) => {
+      await jobRepo.addEvent(jobId, 'error', { error: data });
+      
+      // Update coding session with error
+      if (isCodingSession) {
+        try {
+          await pool.query(
+            'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+            [codingSessionId, 'error', JSON.stringify({ error: data })]
+          );
+        } catch (error) {
+          console.error('[Worker] Error logging coding session error:', error);
+        }
+      }
     });
 
     // Execute CLI command with complete PRD in prompt
@@ -127,6 +175,23 @@ async function processJob(jobId: string) {
     if (result.success) {
       await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
       await jobRepo.addEvent(jobId, 'completed', { output: result.output });
+      
+      // Update coding session to completed
+      if (isCodingSession) {
+        try {
+          await pool.query(
+            'UPDATE coding_sessions SET status = $1, progress = $2, completed_at = $3 WHERE id = $4',
+            ['completed', 100, new Date(), codingSessionId]
+          );
+          await pool.query(
+            'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+            [codingSessionId, 'completed', JSON.stringify({ message: 'Coding completed successfully' })]
+          );
+          console.log(`[Worker] Coding session ${codingSessionId} completed`);
+        } catch (error) {
+          console.error('[Worker] Error completing coding session:', error);
+        }
+      }
       
       // Auto-save artifacts based on job type
       const jobArgs = job.args || {};
@@ -264,11 +329,45 @@ async function processJob(jobId: string) {
     } else {
       await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
       await jobRepo.addEvent(jobId, 'failed', { error: result.error });
+      
+      // Update coding session to failed
+      if (isCodingSession) {
+        try {
+          await pool.query(
+            'UPDATE coding_sessions SET status = $1, error = $2, completed_at = $3 WHERE id = $4',
+            ['failed', result.error, new Date(), codingSessionId]
+          );
+          await pool.query(
+            'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+            [codingSessionId, 'error', JSON.stringify({ error: result.error })]
+          );
+          console.log(`[Worker] Coding session ${codingSessionId} failed`);
+        } catch (error) {
+          console.error('[Worker] Error failing coding session:', error);
+        }
+      }
     }
   } catch (error: any) {
     console.error(`Error processing job ${jobId}:`, error);
     await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
     await jobRepo.addEvent(jobId, 'failed', { error: error.message });
+    
+    // Update coding session to failed if applicable
+    const codingSessionId = job.args?.coding_session_id;
+    if (codingSessionId) {
+      try {
+        await pool.query(
+          'UPDATE coding_sessions SET status = $1, error = $2, completed_at = $3 WHERE id = $4',
+          ['failed', error.message, new Date(), codingSessionId]
+        );
+        await pool.query(
+          'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+          [codingSessionId, 'error', JSON.stringify({ error: error.message })]
+        );
+      } catch (err) {
+        console.error('[Worker] Error updating failed coding session:', err);
+      }
+    }
   }
 }
 
