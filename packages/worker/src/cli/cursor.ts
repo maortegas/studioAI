@@ -100,22 +100,35 @@ export class CursorCLI extends EventEmitter {
       });
 
       childProcess.on('close', (code) => {
-        if (code === 0) {
+        // Check for resource_exhausted in error output
+        const hasResourceExhausted = errorOutput.includes('resource_exhausted') || 
+                                      errorOutput.includes('ConnectError') ||
+                                      output.includes('resource_exhausted') ||
+                                      output.includes('ConnectError');
+        
+        if (code === 0 && !hasResourceExhausted) {
           resolve({
             success: true,
             output,
             error: errorOutput || undefined,
           });
         } else {
+          // If resource_exhausted is detected, include it in error
+          const errorMsg = hasResourceExhausted 
+            ? `resource_exhausted: ${errorOutput || output || `cursor-agent exited with code ${code}`}`
+            : (errorOutput || `cursor-agent exited with code ${code}`);
+          
           resolve({
             success: false,
             output,
-            error: errorOutput || `cursor-agent exited with code ${code}`,
+            error: errorMsg,
           });
         }
       });
 
       childProcess.on('error', (error) => {
+        // Log the error for debugging
+        console.error(`[Cursor CLI] Process error:`, error);
         reject(error);
       });
 

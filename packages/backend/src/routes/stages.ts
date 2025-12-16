@@ -3,6 +3,8 @@ import { ProjectRepository } from '../repositories/projectRepository';
 import { ArtifactRepository } from '../repositories/artifactRepository';
 import { TaskRepository } from '../repositories/taskRepository';
 import { ProjectStage, StageName, StageStatus } from '@devflow-studio/shared';
+import { Pool } from 'pg';
+import pool from '../config/database';
 
 const router = Router();
 const projectRepo = new ProjectRepository();
@@ -154,14 +156,92 @@ router.get('/project/:projectId', async (req: Request, res: Response) => {
     });
 
     // QA stage
+    const qaSessionsResult = await pool.query(
+      'SELECT status, total_tests, passed_tests, failed_tests FROM qa_sessions WHERE project_id = $1',
+      [projectId]
+    );
+    const qaSessions = qaSessionsResult.rows;
+    const completedQASessions = qaSessions.filter((s: any) => s.status === 'completed');
+    const totalQASessions = qaSessions.length;
+    const runningQASessions = qaSessions.filter((s: any) => s.status === 'running' || s.status === 'pending').length;
+    
+    let qaCompletion = 0;
+    let qaStatus: StageStatus = 'not_started';
+    let qaChecklist = [];
+    let qaNextAction = '';
+    
+    if (totalQASessions > 0) {
+      // Calculate completion based on passed tests across all sessions
+      const totalTests = qaSessions.reduce((sum: number, s: any) => sum + (s.total_tests || 0), 0);
+      const totalPassed = qaSessions.reduce((sum: number, s: any) => sum + (s.passed_tests || 0), 0);
+      const totalFailed = qaSessions.reduce((sum: number, s: any) => sum + (s.failed_tests || 0), 0);
+      
+      if (totalTests > 0) {
+        qaCompletion = Math.round((totalPassed / totalTests) * 100);
+      } else {
+        qaCompletion = completedQASessions.length > 0 ? 50 : 0;
+      }
+      
+      qaStatus = qaCompletion === 100 && totalFailed === 0 ? 'done' 
+        : runningQASessions > 0 ? 'in_progress' 
+        : totalQASessions > 0 ? 'in_progress' 
+        : 'not_started';
+      
+      qaChecklist = [
+        { 
+          id: '1', 
+          label: `QA sessions completed (${completedQASessions.length}/${totalQASessions})`, 
+          completed: completedQASessions.length === totalQASessions && totalQASessions > 0
+        },
+        { 
+          id: '2', 
+          label: `Tests passed: ${totalPassed}/${totalTests}`, 
+          completed: totalFailed === 0 && totalTests > 0
+        },
+        { 
+          id: '3', 
+          label: `Active QA sessions: ${runningQASessions}`, 
+          completed: runningQASessions > 0
+        },
+      ];
+      
+      qaNextAction = qaCompletion === 100 && totalFailed === 0
+        ? undefined
+        : runningQASessions > 0
+        ? `${runningQASessions} QA session(s) in progress`
+        : totalFailed > 0
+        ? `${totalFailed} test(s) failed - review and fix`
+        : 'QA will run automatically after coding sessions';
+    } else {
+      // Check if we have completed coding sessions
+      const codingSessionsResult = await pool.query(
+        'SELECT COUNT(*) as count FROM coding_sessions WHERE project_id = $1 AND status = $2',
+        [projectId, 'completed']
+      );
+      const completedCodingSessions = parseInt(codingSessionsResult.rows[0]?.count || '0');
+      
+      if (completedCodingSessions > 0) {
+        qaChecklist = [
+          { id: '1', label: `${completedCodingSessions} coding session(s) completed`, completed: true },
+          { id: '2', label: 'QA sessions started', completed: false },
+        ];
+        qaStatus = 'in_progress';
+        qaCompletion = 25;
+        qaNextAction = 'QA will start automatically';
+      } else {
+        qaChecklist = [
+          { id: '1', label: 'Complete coding sessions first', completed: false },
+        ];
+        qaNextAction = 'Complete implementation stage first';
+      }
+    }
+    
     stages.push({
       name: 'qa',
-      status: 'not_started',
-      completion: 0,
-      checklist: [
-        { id: '1', label: 'QA tests completed', completed: false },
-      ],
-      next_action: 'Start QA testing',
+      status: qaStatus,
+      completion: qaCompletion,
+      checklist: qaChecklist,
+      next_action: qaNextAction,
     });
 
     // Release stage

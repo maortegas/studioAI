@@ -10,12 +10,13 @@ import ArchitectureManager from '../components/ArchitectureManager';
 import UserStoriesManager from '../components/UserStoriesManager';
 import RoadmapView from '../components/RoadmapView';
 import ImplementationDashboard from '../components/ImplementationDashboard';
+import QADashboard from '../components/QADashboard';
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'prd' | 'design' | 'stories' | 'roadmap' | 'implementation' | 'stages' | 'tasks' | 'ai'>(
+  const [activeTab, setActiveTab] = useState<'overview' | 'prd' | 'design' | 'stories' | 'roadmap' | 'implementation' | 'qa' | 'stages' | 'tasks' | 'ai'>(
     'overview'
   );
   const [loading, setLoading] = useState(true);
@@ -67,7 +68,7 @@ export default function ProjectDetail() {
 
       <div className="border-b border-gray-200 mb-6">
         <nav className="flex space-x-8">
-          {(['overview', 'prd', 'design', 'stories', 'roadmap', 'implementation', 'stages', 'tasks', 'ai'] as const).map((tab) => (
+          {(['overview', 'prd', 'design', 'stories', 'roadmap', 'implementation', 'qa', 'stages', 'tasks', 'ai'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -118,6 +119,8 @@ export default function ProjectDetail() {
         {activeTab === 'roadmap' && <RoadmapView projectId={project.id} />}
 
         {activeTab === 'implementation' && <ImplementationDashboard projectId={project.id} />}
+
+        {activeTab === 'qa' && <QADashboard projectId={project.id} />}
 
         {activeTab === 'stages' && <StageTracker projectId={project.id} />}
 

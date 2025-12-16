@@ -11,6 +11,8 @@ import stagesRouter from './routes/stages';
 import roadmapRouter from './routes/roadmap';
 import architectureRouter from './routes/architecture';
 import codingSessionsRouter from './routes/coding-sessions';
+import qaRouter from './routes/qa';
+import testSuitesRouter from './routes/test-suites';
 import { validateProjectPath } from './middleware/validation';
 import { auditLog } from './middleware/audit';
 
@@ -34,6 +36,8 @@ app.use('/api/stages', stagesRouter);
 app.use('/api/roadmap', roadmapRouter);
 app.use('/api/architecture', architectureRouter);
 app.use('/api/coding-sessions', codingSessionsRouter);
+app.use('/api/qa', qaRouter);
+app.use('/api/test-suites', testSuitesRouter);
 
 // Health check
 app.get('/health', (req, res) => {

@@ -1,6 +1,6 @@
 export type ProgrammerType = 'backend' | 'frontend' | 'fullstack';
 
-export type CodingSessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'paused';
+export type CodingSessionStatus = 'pending' | 'generating_tests' | 'tests_generated' | 'running' | 'completed' | 'failed' | 'paused';
 
 export interface CodingSession {
   id: string;
@@ -8,10 +8,15 @@ export interface CodingSession {
   story_id: string; // Task ID of the user story
   programmer_type: ProgrammerType;
   ai_job_id?: string;
+  test_generation_job_id?: string; // AI job for test generation
+  implementation_job_id?: string; // AI job for implementation
   status: CodingSessionStatus;
   progress: number; // 0-100
+  test_progress?: number; // 0-50 for test generation phase
+  implementation_progress?: number; // 0-50 for implementation phase
   current_file?: string;
   output?: string;
+  tests_output?: string; // Generated tests content
   error?: string;
   started_at?: Date;
   completed_at?: Date;
@@ -28,11 +33,14 @@ export interface CreateCodingSessionRequest {
 
 export interface CodingSessionEvent {
   session_id: string;
-  event_type: 'progress' | 'file_change' | 'output' | 'error' | 'completed';
+  event_type: 'progress' | 'file_change' | 'output' | 'error' | 'completed' | 'tests_generated' | 'implementation_started';
   payload: {
     progress?: number;
+    test_progress?: number;
+    implementation_progress?: number;
     current_file?: string;
     output?: string;
+    tests_output?: string;
     error?: string;
     message?: string;
   };

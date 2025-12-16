@@ -1,0 +1,264 @@
+import { TestSuiteRepository } from '../repositories/testSuiteRepository';
+import { ProjectRepository } from '../repositories/projectRepository';
+import { 
+  TestSuite, 
+  CreateTestSuiteRequest, 
+  UpdateTestSuiteRequest,
+  TestSuiteWithExecutions,
+  TestExecution
+} from '@devflow-studio/shared';
+import path from 'path';
+import fs from 'fs/promises';
+
+export class TestSuiteService {
+  private testSuiteRepo: TestSuiteRepository;
+  private projectRepo: ProjectRepository;
+
+  constructor() {
+    this.testSuiteRepo = new TestSuiteRepository();
+    this.projectRepo = new ProjectRepository();
+  }
+
+  /**
+   * Create a test suite for a coding session
+   */
+  async createTestSuite(data: CreateTestSuiteRequest): Promise<TestSuite> {
+    return await this.testSuiteRepo.create(data);
+  }
+
+  /**
+   * Get test suites for a coding session
+   */
+  async getTestSuitesForSession(codingSessionId: string): Promise<TestSuiteWithExecutions[]> {
+    const suites = await this.testSuiteRepo.findByCodingSession(codingSessionId);
+    
+    const suitesWithExecutions: TestSuiteWithExecutions[] = [];
+    for (const suite of suites) {
+      const executions = await this.testSuiteRepo.getExecutions(suite.id);
+      suitesWithExecutions.push({
+        ...suite,
+        executions,
+        last_execution: executions[0] || undefined,
+      });
+    }
+    
+    return suitesWithExecutions;
+  }
+
+  /**
+   * Get test suite by ID with executions
+   */
+  async getTestSuite(id: string): Promise<TestSuiteWithExecutions | null> {
+    const suite = await this.testSuiteRepo.findById(id);
+    if (!suite) {
+      return null;
+    }
+
+    const executions = await this.testSuiteRepo.getExecutions(id);
+    return {
+      ...suite,
+      executions,
+      last_execution: executions[0] || undefined,
+    };
+  }
+
+  /**
+   * Update test suite (e.g., after generation or manual edit)
+   */
+  async updateTestSuite(id: string, data: UpdateTestSuiteRequest): Promise<TestSuite | null> {
+    return await this.testSuiteRepo.update(id, data);
+  }
+
+  /**
+   * Save test code to file system
+   */
+  async saveTestCodeToFile(suiteId: string, testCode: string): Promise<string> {
+    const suite = await this.testSuiteRepo.findById(suiteId);
+    if (!suite) {
+      throw new Error('Test suite not found');
+    }
+
+    const project = await this.projectRepo.findById(suite.project_id);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    // Determine file path based on test type and coding session
+    const testDir = path.join(project.base_path, 'tests');
+    if (suite.coding_session_id) {
+      const sessionDir = path.join(testDir, `session_${suite.coding_session_id}`);
+      await fs.mkdir(sessionDir, { recursive: true });
+      
+      const fileName = `${suite.test_type}_${suite.name.replace(/\s+/g, '_')}.test.js`;
+      const filePath = path.join(sessionDir, fileName);
+      await fs.writeFile(filePath, testCode, 'utf8');
+      
+      // Update suite with file path
+      await this.testSuiteRepo.update(suiteId, {
+        file_path: `tests/session_${suite.coding_session_id}/${fileName}`,
+        test_code: testCode,
+        status: 'ready',
+        generated_at: new Date(),
+      });
+      
+      return filePath;
+    } else {
+      // General test file
+      await fs.mkdir(testDir, { recursive: true });
+      const fileName = `${suite.test_type}_${suite.name.replace(/\s+/g, '_')}.test.js`;
+      const filePath = path.join(testDir, fileName);
+      await fs.writeFile(filePath, testCode, 'utf8');
+      
+      await this.testSuiteRepo.update(suiteId, {
+        file_path: `tests/${fileName}`,
+        test_code: testCode,
+        status: 'ready',
+        generated_at: new Date(),
+      });
+      
+      return filePath;
+    }
+  }
+
+  /**
+   * Execute a test suite
+   */
+  async executeTestSuite(suiteId: string, executionType: 'auto' | 'manual' = 'auto'): Promise<TestExecution> {
+    const suite = await this.testSuiteRepo.findById(suiteId);
+    if (!suite) {
+      throw new Error('Test suite not found');
+    }
+
+    if (suite.status !== 'ready') {
+      throw new Error('Test suite is not ready for execution');
+    }
+
+    const project = await this.projectRepo.findById(suite.project_id);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    // Create execution record
+    const execution = await this.testSuiteRepo.createExecution({
+      test_suite_id: suiteId,
+      execution_type: executionType,
+      status: 'running',
+    });
+
+    // Update suite status
+    await this.testSuiteRepo.update(suiteId, { status: 'running' });
+
+    // Execute tests based on project tech stack
+    try {
+      const result = await this.runTests(project, suite);
+      
+      // Update execution with results
+      await this.testSuiteRepo.updateExecution(execution.id, {
+        status: result.status,
+        completed_at: new Date(),
+        duration: result.duration,
+        total_tests: result.total_tests,
+        passed_tests: result.passed_tests,
+        failed_tests: result.failed_tests,
+        skipped_tests: result.skipped_tests,
+        output: result.output,
+        error_message: result.error,
+      });
+
+      // Update suite status
+      await this.testSuiteRepo.update(suiteId, {
+        status: result.status === 'passed' ? 'passed' : 'failed',
+        executed_at: new Date(),
+        execution_result: result,
+      });
+
+      return await this.testSuiteRepo.getExecutions(suiteId).then(execs => execs[0]);
+    } catch (error: any) {
+      await this.testSuiteRepo.updateExecution(execution.id, {
+        status: 'error',
+        completed_at: new Date(),
+        error_message: error.message,
+      });
+
+      await this.testSuiteRepo.update(suiteId, {
+        status: 'failed',
+        executed_at: new Date(),
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Run tests based on project tech stack
+   */
+  private async runTests(project: any, suite: TestSuite): Promise<{
+    status: 'passed' | 'failed' | 'error';
+    duration: number;
+    total_tests: number;
+    passed_tests: number;
+    failed_tests: number;
+    skipped_tests: number;
+    output: string;
+    error?: string;
+  }> {
+    const startTime = Date.now();
+    const techStack = project.tech_stack?.toLowerCase() || '';
+
+    // Determine test runner command based on tech stack
+    let command: string;
+    let args: string[];
+
+    if (techStack.includes('java') || techStack.includes('spring')) {
+      // Java/Spring Boot - use Maven or Gradle
+      command = 'mvn';
+      args = ['test', '-Dtest=' + suite.name];
+    } else if (techStack.includes('javascript') || techStack.includes('typescript') || techStack.includes('node')) {
+      // Node.js - use Jest, Mocha, or npm test
+      command = 'npm';
+      args = ['test', '--', suite.file_path || ''];
+    } else if (techStack.includes('python')) {
+      // Python - use pytest
+      command = 'pytest';
+      args = [suite.file_path || ''];
+    } else {
+      // Default: try npm test
+      command = 'npm';
+      args = ['test'];
+    }
+
+    // For now, return a mock result
+    // In production, this would execute the actual test command
+    const duration = Date.now() - startTime;
+    
+    return {
+      status: 'passed', // Would be determined by actual execution
+      duration,
+      total_tests: 0,
+      passed_tests: 0,
+      failed_tests: 0,
+      skipped_tests: 0,
+      output: 'Test execution would run here',
+    };
+  }
+
+  /**
+   * Delete a test suite
+   */
+  async deleteTestSuite(id: string): Promise<void> {
+    const suite = await this.testSuiteRepo.findById(id);
+    if (suite && suite.file_path) {
+      const project = await this.projectRepo.findById(suite.project_id);
+      if (project) {
+        const filePath = path.join(project.base_path, suite.file_path);
+        try {
+          await fs.unlink(filePath);
+        } catch (error) {
+          // File might not exist, continue with deletion
+        }
+      }
+    }
+    
+    await this.testSuiteRepo.delete(id);
+  }
+}

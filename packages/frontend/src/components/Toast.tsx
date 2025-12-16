@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 
 interface ToastProps {
   message: string;
-  type?: 'success' | 'error' | 'info';
+  type?: 'success' | 'error' | 'info' | 'warning';
   onClose: () => void;
   duration?: number;
 }
@@ -20,6 +20,7 @@ export default function Toast({ message, type = 'info', onClose, duration = 3000
     success: 'bg-green-500',
     error: 'bg-red-500',
     info: 'bg-blue-500',
+    warning: 'bg-yellow-500',
   };
 
   return (

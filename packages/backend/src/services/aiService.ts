@@ -94,19 +94,28 @@ export class AIService {
     return bundle.join('\n');
   }
 
-  async createAIJob(request: ExecuteAIJobRequest): Promise<AIJob> {
-    const promptBundle = await this.buildPromptBundle(request.project_id, request.task_id);
-
+  async createAIJob(request: ExecuteAIJobRequest, additionalArgs?: Record<string, any>): Promise<AIJob> {
     // Get project to get base_path
     const project = await this.projectRepo.findById(request.project_id);
     if (!project) {
       throw new Error('Project not found');
     }
 
-    // Combine prompt bundle with additional prompt if provided
-    const finalPrompt = request.prompt 
-      ? `${promptBundle}\n\n${request.prompt}`
-      : promptBundle;
+    // Check if we should skip the full bundle (for test generation, etc.)
+    const skipBundle = (request as any).skipBundle === true;
+    let finalPrompt: string;
+
+    if (skipBundle && request.prompt) {
+      // Use only the provided prompt (lightweight mode)
+      finalPrompt = request.prompt;
+    } else {
+      // Build full prompt bundle
+      const promptBundle = await this.buildPromptBundle(request.project_id, request.task_id);
+      // Combine prompt bundle with additional prompt if provided
+      finalPrompt = request.prompt 
+        ? `${promptBundle}\n\n${request.prompt}`
+        : promptBundle;
+    }
 
     // Determine command based on provider
     let command: string;
@@ -132,6 +141,11 @@ export class AIService {
       };
     } else {
       throw new Error(`Unsupported provider: ${request.provider}`);
+    }
+
+    // Merge additional args if provided
+    if (additionalArgs) {
+      args = { ...args, ...additionalArgs };
     }
 
     const job = await this.aiJobRepo.create({

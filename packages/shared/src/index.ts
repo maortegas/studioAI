@@ -6,4 +6,6 @@ export * from './types/stage';
 export * from './types/run';
 export * from './types/roadmap';
 export * from './types/coding-session';
+export * from './types/qa';
+export * from './types/test-suite';
 

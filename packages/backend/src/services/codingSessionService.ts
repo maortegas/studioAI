@@ -47,28 +47,32 @@ export class CodingSessionService {
       programmer_type: data.programmer_type,
     });
 
-    // Create AI job for code generation with session_id in args
-    const prompt = this.buildCodingPrompt(story, data.programmer_type);
-    const aiJob = await this.aiService.createAIJob({
+    // Step 1: Create AI job for TEST GENERATION first
+    const testPrompt = this.buildTestGenerationPrompt(story, data.programmer_type);
+    const testJob = await this.aiService.createAIJob({
       project_id: data.project_id,
       task_id: data.story_id,
       provider: data.provider || 'cursor',
-      mode: 'agent', // Use agent mode for code generation
-      prompt,
+      mode: 'agent',
+      prompt: testPrompt,
     });
 
-    // Update session with AI job ID
-    // Also inject coding_session_id into AI job args
+    // Update session with test generation job ID and status
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+    
     await this.sessionRepo.update(session.id, {
-      ai_job_id: aiJob.id,
+      status: 'generating_tests',
+      test_generation_job_id: testJob.id,
+      progress: 0,
+      test_progress: 0,
+      implementation_progress: 0,
     });
 
     // Update AI job args to include coding_session_id
-    const { Pool } = await import('pg');
-    const pool = (await import('../config/database')).default;
     await pool.query(
       `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
-      [JSON.stringify({ coding_session_id: session.id }), aiJob.id]
+      [JSON.stringify({ coding_session_id: session.id, phase: 'test_generation' }), testJob.id]
     );
 
     return session;
@@ -313,9 +317,58 @@ export class CodingSessionService {
   }
 
   /**
-   * Build coding prompt based on story and programmer type
+   * Build test generation prompt
    */
-  private buildCodingPrompt(story: any, programmerType: ProgrammerType): string {
+  private buildTestGenerationPrompt(story: any, programmerType: ProgrammerType): string {
+    const lines: string[] = [];
+
+    lines.push(`# Test Generation Task: ${story.title}\n`);
+    lines.push(`**Programmer Type**: ${programmerType}\n`);
+    lines.push(`**Priority**: ${story.priority}\n\n`);
+
+    if (story.description) {
+      lines.push(`## User Story\n`);
+      lines.push(`${story.description}\n\n`);
+    }
+
+    lines.push(`## Instructions\n`);
+    lines.push(`You are a QA engineer. Your task is to generate comprehensive test suites BEFORE implementation.\n\n`);
+    
+    if (programmerType === 'backend') {
+      lines.push(`Generate tests for:`);
+      lines.push(`- API endpoints and routes`);
+      lines.push(`- Database models and repositories`);
+      lines.push(`- Business logic and services`);
+      lines.push(`- Error handling and validation\n`);
+      lines.push(`Use testing frameworks like Jest, Mocha, or similar.\n`);
+    } else if (programmerType === 'frontend') {
+      lines.push(`Generate tests for:`);
+      lines.push(`- React components`);
+      lines.push(`- User interactions and UI flows`);
+      lines.push(`- State management`);
+      lines.push(`- API integration\n`);
+      lines.push(`Use testing frameworks like Jest, React Testing Library, or similar.\n`);
+    } else {
+      lines.push(`Generate tests for both:`);
+      lines.push(`- Backend: API endpoints, services, database operations`);
+      lines.push(`- Frontend: Components, user flows, state management\n`);
+    }
+
+    lines.push(`\n## Output Format\n`);
+    lines.push(`Provide the test code in the following format:\n`);
+    lines.push(`\`\`\`\n`);
+    lines.push(`// Test file path: path/to/test/file.test.js\n`);
+    lines.push(`// Test code here...\n`);
+    lines.push(`\`\`\`\n`);
+    lines.push(`\nGenerate complete, runnable test suites that cover all acceptance criteria from the user story.`);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Build implementation prompt based on story, programmer type, and generated tests
+   */
+  private buildCodingPrompt(story: any, programmerType: ProgrammerType, testsOutput?: string): string {
     const lines: string[] = [];
 
     lines.push(`# Coding Task: ${story.title}\n`);
@@ -350,10 +403,69 @@ export class CodingSessionService {
       lines.push(`- Ensure proper integration between frontend and backend\n`);
     }
 
-    lines.push(`\nImplement this user story following the project's architecture and coding standards.`);
-    lines.push(`Write clean, maintainable, and well-documented code.`);
+    if (testsOutput) {
+      lines.push(`\n## Generated Tests\n`);
+      lines.push(`The following tests have been generated. Implement the code to make these tests pass:\n`);
+      lines.push(`\`\`\`\n`);
+      lines.push(testsOutput);
+      lines.push(`\`\`\`\n`);
+      lines.push(`\n## Implementation Instructions\n`);
+      lines.push(`Implement the user story following Test-Driven Development (TDD) principles:`);
+      lines.push(`1. Review the generated tests above`);
+      lines.push(`2. Implement the code to make all tests pass`);
+      lines.push(`3. Ensure code follows the project's architecture and coding standards`);
+      lines.push(`4. Write clean, maintainable, and well-documented code`);
+    } else {
+      lines.push(`\nImplement this user story following the project's architecture and coding standards.`);
+      lines.push(`Write clean, maintainable, and well-documented code.`);
+    }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Start implementation phase after tests are generated
+   */
+  async startImplementationPhase(sessionId: string): Promise<void> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Coding session not found');
+    }
+
+    if (session.status !== 'tests_generated') {
+      throw new Error('Tests must be generated before starting implementation');
+    }
+
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) {
+      throw new Error('Story not found');
+    }
+
+    // Create AI job for implementation
+    const implementationPrompt = this.buildCodingPrompt(story, session.programmer_type, (session as any).tests_output);
+    const implementationJob = await this.aiService.createAIJob({
+      project_id: session.project_id,
+      task_id: session.story_id,
+      provider: 'cursor',
+      mode: 'agent',
+      prompt: implementationPrompt,
+    });
+
+    // Update session with implementation job ID
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+    
+    await this.sessionRepo.update(sessionId, {
+      status: 'running',
+      implementation_job_id: implementationJob.id,
+      ai_job_id: implementationJob.id, // Keep for backward compatibility
+    });
+
+    // Update AI job args
+    await pool.query(
+      `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ coding_session_id: sessionId, phase: 'implementation' }), implementationJob.id]
+    );
   }
 
   /**

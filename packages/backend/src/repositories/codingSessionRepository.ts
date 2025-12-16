@@ -14,12 +14,14 @@ export class CodingSessionRepository {
     story_id: string;
     programmer_type: ProgrammerType;
     ai_job_id?: string;
+    test_generation_job_id?: string;
+    implementation_job_id?: string;
   }): Promise<CodingSession> {
     const result = await this.pool.query(
-      `INSERT INTO coding_sessions (project_id, story_id, programmer_type, ai_job_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO coding_sessions (project_id, story_id, programmer_type, ai_job_id, test_generation_job_id, implementation_job_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [data.project_id, data.story_id, data.programmer_type, data.ai_job_id]
+      [data.project_id, data.story_id, data.programmer_type, data.ai_job_id, data.test_generation_job_id, data.implementation_job_id]
     );
     return result.rows[0];
   }
@@ -92,6 +94,26 @@ export class CodingSessionRepository {
     if (data.ai_job_id !== undefined) {
       fields.push(`ai_job_id = $${paramCount++}`);
       values.push(data.ai_job_id);
+    }
+    if ((data as any).test_generation_job_id !== undefined) {
+      fields.push(`test_generation_job_id = $${paramCount++}`);
+      values.push((data as any).test_generation_job_id);
+    }
+    if ((data as any).implementation_job_id !== undefined) {
+      fields.push(`implementation_job_id = $${paramCount++}`);
+      values.push((data as any).implementation_job_id);
+    }
+    if ((data as any).test_progress !== undefined) {
+      fields.push(`test_progress = $${paramCount++}`);
+      values.push((data as any).test_progress);
+    }
+    if ((data as any).implementation_progress !== undefined) {
+      fields.push(`implementation_progress = $${paramCount++}`);
+      values.push((data as any).implementation_progress);
+    }
+    if ((data as any).tests_output !== undefined) {
+      fields.push(`tests_output = $${paramCount++}`);
+      values.push((data as any).tests_output);
     }
 
     values.push(id);
