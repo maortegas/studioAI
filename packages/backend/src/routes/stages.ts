@@ -77,18 +77,80 @@ router.get('/project/:projectId', async (req: Request, res: Response) => {
     });
 
     // Implementation stage
-    const allTasks = await taskRepo.findByProjectId(projectId);
-    const completedTasks = allTasks.filter(t => t.status === 'done').length;
-    const totalTasks = allTasks.length;
-    const completion = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+    // Get coding sessions
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+    const sessionsResult = await pool.query(
+      'SELECT status FROM coding_sessions WHERE project_id = $1',
+      [projectId]
+    );
+    const sessions = sessionsResult.rows;
+    const completedSessions = sessions.filter((s: any) => s.status === 'completed').length;
+    const totalSessions = sessions.length;
+    const runningSessions = sessions.filter((s: any) => s.status === 'running' || s.status === 'pending').length;
+    
+    // Calculate completion based on sessions if they exist, otherwise use stories
+    let implementationCompletion = 0;
+    let implementationStatus: StageStatus = 'not_started';
+    let implementationChecklist = [];
+    let nextAction = '';
+    
+    if (totalSessions > 0) {
+      // Use sessions for calculation
+      implementationCompletion = Math.round((completedSessions / totalSessions) * 100);
+      implementationStatus = implementationCompletion === 100 ? 'done' 
+        : runningSessions > 0 ? 'in_progress' 
+        : totalSessions > 0 ? 'in_progress' 
+        : 'not_started';
+      
+      implementationChecklist = [
+        { 
+          id: '1', 
+          label: `Coding sessions (${completedSessions}/${totalSessions})`, 
+          completed: implementationCompletion === 100 
+        },
+        { 
+          id: '2', 
+          label: `Active sessions: ${runningSessions}`, 
+          completed: runningSessions > 0 
+        },
+      ];
+      
+      nextAction = implementationCompletion === 100 
+        ? undefined 
+        : runningSessions > 0 
+        ? `${runningSessions} session(s) in progress` 
+        : 'Start implementation sessions';
+    } else if (stories.length > 0) {
+      // Fallback to stories
+      implementationChecklist = [
+        { 
+          id: '1', 
+          label: `User stories created (${stories.length})`, 
+          completed: true 
+        },
+        { 
+          id: '2', 
+          label: 'Coding sessions started', 
+          completed: false 
+        },
+      ];
+      implementationStatus = 'in_progress';
+      implementationCompletion = 25;
+      nextAction = 'Start coding sessions from user stories';
+    } else {
+      implementationChecklist = [
+        { id: '1', label: 'User stories needed', completed: false },
+      ];
+      nextAction = 'Create user stories first';
+    }
+    
     stages.push({
       name: 'implementation',
-      status: completion === 100 ? 'done' : completion > 0 ? 'in_progress' : 'not_started',
-      completion,
-      checklist: [
-        { id: '1', label: 'Tasks completed', completed: completion === 100 },
-      ],
-      next_action: completion === 100 ? undefined : 'Continue implementing tasks',
+      status: implementationStatus,
+      completion: implementationCompletion,
+      checklist: implementationChecklist,
+      next_action: nextAction,
     });
 
     // QA stage
