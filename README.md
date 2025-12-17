@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # DevFlow Studio
 
 DevFlow Studio es una herramienta que permite gestionar proyectos de software de manera eficiente, utilizando inteligencia artificial para generar y automatizar la creación de documentación, planificación, codificación y seguimiento del ciclo de vida del proyecto.
