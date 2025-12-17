@@ -166,5 +166,81 @@ Return ONLY the JSON array, no additional text.`;
   }
 });
 
+// Improve a simple idea into a well-formatted user story with AI
+router.post('/stories/improve', async (req: Request, res: Response) => {
+  try {
+    const { project_id, idea } = req.body;
+    
+    if (!project_id) {
+      return res.status(400).json({ error: 'project_id is required' });
+    }
+
+    if (!idea || !idea.trim()) {
+      return res.status(400).json({ error: 'idea is required' });
+    }
+
+    // Import AIService to improve the idea
+    const { AIService } = await import('../services/aiService');
+    const aiService = new AIService();
+    
+    // Build prompt bundle which includes PRD (for context)
+    const promptBundle = await aiService.buildPromptBundle(project_id);
+    
+    // Build prompt to improve the idea into a well-formatted user story
+    const improveStoryPrompt = `${promptBundle}
+
+# User Story Improvement Task
+
+The user has provided a simple idea for a user story. Your task is to:
+1. Understand the idea in the context of the project (PRD above)
+2. Transform it into a well-structured, professional user story
+3. Add proper format, acceptance criteria, and prioritization
+
+**User's Idea:**
+${idea.trim()}
+
+## Requirements
+
+Transform this idea into a complete user story following this format:
+
+**Format:**
+- **Title:** "As a [type of user] I want [goal] so that [benefit]"
+- **Description:** Detailed description explaining the user story
+- **Acceptance Criteria:** List of 3-5 specific, testable criteria
+- **Priority:** Number from 0-10 (based on importance in project context)
+
+## Guidelines
+
+- Make the story specific and actionable
+- Ensure it's user-focused and provides clear value
+- Align it with the project goals from the PRD
+- Make it independent and testable
+- Set appropriate priority based on project importance
+- Add detailed acceptance criteria that are clear and measurable
+
+Output format: Return ONLY a JSON object (not an array):
+{
+  "title": "As a [user] I want [goal] so that [benefit]",
+  "description": "Detailed description of the user story",
+  "acceptance_criteria": ["Criterion 1", "Criterion 2", "Criterion 3"],
+  "priority": 5
+}
+
+Return ONLY the JSON object, no additional text or explanation.`;
+
+    // Create AI job for story improvement
+    const job = await aiService.createAIJob({
+      project_id,
+      provider: 'cursor',
+      mode: 'plan',
+      prompt: improveStoryPrompt,
+    });
+
+    res.json({ job_id: job.id, message: 'Story improvement started' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
 

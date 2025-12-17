@@ -14,9 +14,12 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showImproveForm, setShowImproveForm] = useState(false);
   const [editingStory, setEditingStory] = useState<Task | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [storiesCount, setStoriesCount] = useState(10);
+  const [idea, setIdea] = useState('');
+  const [isImproving, setIsImproving] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -25,7 +28,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
 
   // Listen for AI job completion
   useEffect(() => {
-    if (currentJobId && generating) {
+    if (currentJobId && (generating || isImproving)) {
       const checkJobStatus = async () => {
         try {
           const job = await aiJobsApi.getById(currentJobId);
@@ -33,19 +36,34 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
           if (job.status === 'completed') {
             try {
               const result = await aiJobsApi.getResult(currentJobId);
-              await processGeneratedStories(result.output);
+              if (isImproving) {
+                await processImprovedStory(result.output);
+              } else {
+                await processGeneratedStories(result.output);
+              }
               setGenerating(false);
+              setIsImproving(false);
               setCurrentJobId(null);
-              showToast('User stories generated! Review and save them.', 'success');
+              if (isImproving) {
+                showToast('Story improved! Review and save it.', 'success');
+              } else {
+                showToast('User stories generated! Review and save them.', 'success');
+              }
             } catch (error) {
               console.error('Failed to get job result:', error);
               setGenerating(false);
+              setIsImproving(false);
               setCurrentJobId(null);
             }
           } else if (job.status === 'failed') {
             setGenerating(false);
+            setIsImproving(false);
             setCurrentJobId(null);
-            showToast('User stories generation failed', 'error');
+            if (isImproving) {
+              showToast('Story improvement failed', 'error');
+            } else {
+              showToast('User stories generation failed', 'error');
+            }
           } else {
             setTimeout(checkJobStatus, 2000);
           }
@@ -57,7 +75,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
       
       checkJobStatus();
     }
-  }, [currentJobId, generating, showToast]);
+  }, [currentJobId, generating, isImproving, showToast]);
 
   const loadStories = async () => {
     try {
@@ -90,6 +108,35 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
     } catch (error) {
       console.error('Failed to parse generated stories:', error);
       showToast('Failed to parse generated stories. Please check the output format.', 'error');
+    }
+  };
+
+  const processImprovedStory = async (output: string) => {
+    try {
+      // Try to parse JSON object from output (single story, not array)
+      let storyData: any;
+      
+      // Extract JSON from output (might have extra text)
+      const jsonMatch = output.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        storyData = JSON.parse(jsonMatch[0]);
+      } else {
+        // Fallback: try to parse entire output
+        storyData = JSON.parse(output);
+      }
+
+      // If it's an array with one element, extract it
+      if (Array.isArray(storyData) && storyData.length > 0) {
+        storyData = storyData[0];
+      }
+
+      // Store improved story temporarily for review
+      setGeneratedStoriesForReview([storyData]);
+      setShowImproveForm(false);
+      setIdea('');
+    } catch (error) {
+      console.error('Failed to parse improved story:', error);
+      showToast('Failed to parse improved story. Please check the output format.', 'error');
     }
   };
 
@@ -137,6 +184,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
 
   const handleGenerate = async () => {
     setGenerating(true);
+    setIsImproving(false);
     try {
       const result = await tasksApi.generateStories(projectId, storiesCount);
       setCurrentJobId(result.job_id);
@@ -144,6 +192,25 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
     } catch (error: any) {
       showToast(error.response?.data?.error || 'Failed to generate user stories', 'error');
       setGenerating(false);
+      setCurrentJobId(null);
+    }
+  };
+
+  const handleImproveStory = async () => {
+    if (!idea.trim()) {
+      showToast('Please enter an idea for the story', 'error');
+      return;
+    }
+
+    setIsImproving(true);
+    setGenerating(false);
+    try {
+      const result = await tasksApi.improveStory(projectId, idea);
+      setCurrentJobId(result.job_id);
+      showToast('Improving your story idea...', 'info');
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Failed to improve story', 'error');
+      setIsImproving(false);
       setCurrentJobId(null);
     }
   };
@@ -185,23 +252,75 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white">User Stories</h2>
           <div className="flex space-x-2">
             <button
-              onClick={() => setShowCreateForm(!showCreateForm)}
+              onClick={() => {
+                setShowCreateForm(!showCreateForm);
+                setShowImproveForm(false);
+              }}
               className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
             >
               {showCreateForm ? 'Cancel' : 'Create Manually'}
             </button>
             <button
+              onClick={() => {
+                setShowImproveForm(!showImproveForm);
+                setShowCreateForm(false);
+              }}
+              className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+            >
+              {showImproveForm ? 'Cancel' : 'Improve Idea with AI'}
+            </button>
+            <button
               onClick={handleGenerate}
-              disabled={generating}
+              disabled={generating || isImproving}
               className="px-4 py-2 text-sm bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
             >
-              {generating ? 'Generating...' : 'Generate with AI'}
+              {generating ? 'Generating...' : 'Generate Multiple with AI'}
             </button>
           </div>
         </div>
 
+        {/* Improve Idea Form */}
+        {showImproveForm && (
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Enter your story idea:
+                </label>
+                <textarea
+                  value={idea}
+                  onChange={(e) => setIdea(e.target.value)}
+                  placeholder="Example: I want users to be able to login with their email and password..."
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 h-24"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  💡 Describe your idea simply. AI will improve it and format it as a professional user story.
+                </p>
+              </div>
+              <div className="flex space-x-2">
+                <button
+                  onClick={handleImproveStory}
+                  disabled={!idea.trim() || isImproving || generating}
+                  className="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition disabled:opacity-50"
+                >
+                  {isImproving ? 'Improving...' : 'Improve with AI'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowImproveForm(false);
+                    setIdea('');
+                  }}
+                  className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Generate Form */}
-        {!showCreateForm && (
+        {!showCreateForm && !showImproveForm && (
           <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
             <div className="flex items-center space-x-4">
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300">

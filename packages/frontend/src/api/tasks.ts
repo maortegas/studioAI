@@ -38,5 +38,13 @@ export const tasksApi = {
     });
     return response.data;
   },
+
+  improveStory: async (projectId: string, idea: string): Promise<{ job_id: string; message: string }> => {
+    const response = await apiClient.post('/tasks/stories/improve', {
+      project_id: projectId,
+      idea,
+    });
+    return response.data;
+  },
 };
 
