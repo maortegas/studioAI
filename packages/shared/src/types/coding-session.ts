@@ -29,6 +29,7 @@ export interface CreateCodingSessionRequest {
   story_id: string;
   programmer_type: ProgrammerType;
   provider?: 'cursor' | 'claude';
+  test_strategy?: TestStrategy; // 'tdd' for test-driven development (tests before), 'after' for unit tests after coding
 }
 
 export interface CodingSessionEvent {
@@ -47,10 +48,13 @@ export interface CodingSessionEvent {
   timestamp: Date;
 }
 
+export type TestStrategy = 'tdd' | 'after' | 'none'; // TDD: tests before coding, after: unit tests after coding, none: no testing
+
 export interface StartImplementationRequest {
   project_id: string;
   story_ids: string[]; // Array of story IDs to implement
   auto_assign?: boolean; // Auto-assign backend/frontend based on story context
+  test_strategy?: TestStrategy; // 'tdd' for test-driven development (tests before), 'after' for unit tests after coding
 }
 
 export interface ImplementationDashboard {

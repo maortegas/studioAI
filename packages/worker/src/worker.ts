@@ -103,9 +103,9 @@ async function processJob(jobId: string) {
 
     // Check if this is a coding session job
     const codingSessionId = job.args.coding_session_id;
-    const phase = job.args.phase; // 'test_generation' or 'implementation'
+    const phase = job.args.phase; // 'test_generation', 'test_generation_after', or 'implementation'
     const isCodingSession = mode === 'agent' && codingSessionId;
-    const isTestGeneration = isCodingSession && phase === 'test_generation';
+    const isTestGeneration = isCodingSession && (phase === 'test_generation' || phase === 'test_generation_after');
     const isImplementation = isCodingSession && phase === 'implementation';
     
     // Check if this is a QA session job
@@ -304,7 +304,7 @@ async function processJob(jobId: string) {
       
       // Handle coding session completion based on phase
       if (isTestGeneration) {
-        // Test generation completed - save tests and start implementation
+        // Test generation completed
         try {
           const sessionResult = await pool.query(
             'SELECT project_id, story_id, programmer_type FROM coding_sessions WHERE id = $1',
@@ -314,7 +314,7 @@ async function processJob(jobId: string) {
           if (sessionResult.rows.length > 0) {
             const session = sessionResult.rows[0];
             
-            // Parse generated tests and create test suites
+            // Parse generated tests and create test suites (only unit tests)
             const testSuites = await parseAndSaveTestSuites(
               session.project_id,
               codingSessionId,
@@ -323,135 +323,276 @@ async function processJob(jobId: string) {
               session.programmer_type
             );
             
-            // Save tests output and mark tests as generated
-            await pool.query(
-              'UPDATE coding_sessions SET status = $1, test_progress = $2, progress = $3, tests_output = $4 WHERE id = $5',
-              ['tests_generated', 50, 50, result.output, codingSessionId]
-            );
-            
-            await pool.query(
-              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-              [codingSessionId, 'tests_generated', JSON.stringify({ 
-                tests_output: result.output, 
-                test_suites: testSuites.map(ts => ts.id),
-                message: `Generated ${testSuites.length} test suites successfully` 
-              })]
-            );
-            
-            console.log(`[Worker] Generated ${testSuites.length} test suites for coding session ${codingSessionId}`);
-            
-            // Now create implementation job
-            const projectResult = await pool.query('SELECT base_path, name, tech_stack FROM projects WHERE id = $1', [session.project_id]);
-            const project = projectResult.rows[0];
-            const storyResult = await pool.query('SELECT title, description, priority FROM tasks WHERE id = $1', [session.story_id]);
-            const story = storyResult.rows[0];
-            
-            // Build implementation prompt with generated tests
-            const implPrompt = await buildImplementationPrompt(project, story, session.programmer_type, result.output);
-            
-            const implJob = await pool.query(
-              `INSERT INTO ai_jobs (project_id, provider, command, args, status)
-               VALUES ($1, $2, $3, $4, $5)
-               RETURNING *`,
-              [
-                session.project_id,
-                'cursor',
-                'cursor',
-                JSON.stringify({
-                  mode: 'agent',
-                  prompt: implPrompt,
-                  project_path: project.base_path,
-                  coding_session_id: codingSessionId,
-                  phase: 'implementation',
-                }),
-                'pending'
-              ]
-            );
-            
-            // Update session with implementation job ID
-            await pool.query(
-              'UPDATE coding_sessions SET implementation_job_id = $1, ai_job_id = $2 WHERE id = $3',
-              [implJob.rows[0].id, implJob.rows[0].id, codingSessionId]
-            );
-            
-            console.log(`[Worker] Implementation job ${implJob.rows[0].id} created for session ${codingSessionId}`);
-          }
-        } catch (error) {
-          console.error('[Worker] Error processing test generation completion:', error);
-        }
-      } else if (isImplementation) {
-        // Implementation completed - mark session as done and trigger QA
-        try {
-          await pool.query(
-            'UPDATE coding_sessions SET status = $1, implementation_progress = $2, progress = $3, completed_at = $4 WHERE id = $5',
-            ['completed', 50, 100, new Date(), codingSessionId]
-          );
-          await pool.query(
-            'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-            [codingSessionId, 'completed', JSON.stringify({ message: 'Implementation completed successfully' })]
-          );
-          console.log(`[Worker] Coding session ${codingSessionId} completed`);
-          
-          // Automatically execute test suites for this coding session
-          try {
-            await executeTestSuitesForSession(codingSessionId);
-          } catch (testError) {
-            console.error('[Worker] Error executing test suites:', testError);
-            // Continue even if test execution fails
-          }
-          
-          // Automatically trigger QA session
-          try {
-            const codingSession = await pool.query(
-              'SELECT project_id FROM coding_sessions WHERE id = $1',
-              [codingSessionId]
-            );
-            
-            if (codingSession.rows.length > 0) {
-              const projectId = codingSession.rows[0].project_id;
-              
-              // Create QA session
-              const qaSession = await pool.query(
-                'INSERT INTO qa_sessions (project_id, coding_session_id, status) VALUES ($1, $2, $3) RETURNING *',
-                [projectId, codingSessionId, 'pending']
+            if (phase === 'test_generation_after') {
+              // Test generation AFTER implementation - mark as completed
+              await pool.query(
+                'UPDATE coding_sessions SET status = $1, test_progress = $2, progress = $3, tests_output = $4, completed_at = $5 WHERE id = $6',
+                ['completed', 50, 100, result.output, new Date(), codingSessionId]
               );
               
-              const qaSessionId = qaSession.rows[0].id;
-              console.log(`[Worker] Created QA session ${qaSessionId} for coding session ${codingSessionId}`);
+              await pool.query(
+                'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                [codingSessionId, 'completed', JSON.stringify({ 
+                  tests_output: result.output, 
+                  test_suites: testSuites.map(ts => ts.id),
+                  message: `Generated ${testSuites.length} unit test suites after implementation` 
+                })]
+              );
               
-              // Create AI job for QA
-              const projectPathResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
-              const projectPath = projectPathResult.rows[0]?.base_path;
-              const qaPrompt = await buildQAPrompt(projectId, codingSessionId);
-              const qaJob = await pool.query(
+              console.log(`[Worker] Generated ${testSuites.length} unit test suites for coding session ${codingSessionId} (after implementation)`);
+              
+              // Automatically execute test suites
+              try {
+                await executeTestSuitesForSession(codingSessionId);
+              } catch (testError) {
+                console.error('[Worker] Error executing test suites:', testError);
+              }
+            } else {
+              // TDD: Test generation BEFORE implementation - save tests and start implementation
+              await pool.query(
+                'UPDATE coding_sessions SET status = $1, test_progress = $2, progress = $3, tests_output = $4 WHERE id = $5',
+                ['tests_generated', 50, 50, result.output, codingSessionId]
+              );
+              
+              await pool.query(
+                'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                [codingSessionId, 'tests_generated', JSON.stringify({ 
+                  tests_output: result.output, 
+                  test_suites: testSuites.map(ts => ts.id),
+                  message: `Generated ${testSuites.length} unit test suites successfully` 
+                })]
+              );
+              
+              console.log(`[Worker] Generated ${testSuites.length} unit test suites for coding session ${codingSessionId}`);
+              
+              // Now create implementation job
+              const projectResult = await pool.query('SELECT base_path, name, tech_stack FROM projects WHERE id = $1', [session.project_id]);
+              const project = projectResult.rows[0];
+              const storyResult = await pool.query('SELECT title, description, priority FROM tasks WHERE id = $1', [session.story_id]);
+              const story = storyResult.rows[0];
+              
+              // Build implementation prompt with generated tests
+              const implPrompt = await buildImplementationPrompt(project, story, session.programmer_type, result.output);
+              
+              const implJob = await pool.query(
                 `INSERT INTO ai_jobs (project_id, provider, command, args, status)
                  VALUES ($1, $2, $3, $4, $5)
                  RETURNING *`,
                 [
-                  projectId,
+                  session.project_id,
                   'cursor',
                   'cursor',
                   JSON.stringify({
                     mode: 'agent',
-                    prompt: qaPrompt,
-                    project_path: projectPath,
-                    qa_session_id: qaSessionId,
+                    prompt: implPrompt,
+                    project_path: project.base_path,
+                    coding_session_id: codingSessionId,
+                    phase: 'implementation',
                   }),
                   'pending'
                 ]
               );
               
-              // Update QA session to running
+              // Update session with implementation job ID
               await pool.query(
-                'UPDATE qa_sessions SET status = $1, started_at = $2 WHERE id = $3',
-                ['running', new Date(), qaSessionId]
+                'UPDATE coding_sessions SET implementation_job_id = $1, ai_job_id = $2 WHERE id = $3',
+                [implJob.rows[0].id, implJob.rows[0].id, codingSessionId]
               );
               
-              console.log(`[Worker] QA job ${qaJob.rows[0].id} created for session ${qaSessionId}`);
+              console.log(`[Worker] Implementation job ${implJob.rows[0].id} created for session ${codingSessionId}`);
             }
-          } catch (qaError) {
-            console.error('[Worker] Error creating QA session:', qaError);
-            // Don't fail the coding session if QA creation fails
+          }
+        } catch (error) {
+          console.error('[Worker] Error processing test generation completion:', error);
+        }
+      } else if (isImplementation) {
+        // Implementation completed
+        try {
+          const testStrategy = job.args?.test_strategy || 'tdd';
+          
+          // Check if we need to generate tests after implementation
+          if (testStrategy === 'after') {
+            // Generate unit tests after implementation
+            console.log(`[Worker] Implementation completed for session ${codingSessionId}, generating unit tests...`);
+            
+            const sessionResult = await pool.query(
+              'SELECT project_id, story_id, programmer_type FROM coding_sessions WHERE id = $1',
+              [codingSessionId]
+            );
+            
+            if (sessionResult.rows.length > 0) {
+              const session = sessionResult.rows[0];
+              const storyResult = await pool.query('SELECT title, description, priority FROM tasks WHERE id = $1', [session.story_id]);
+              const story = storyResult.rows[0];
+              
+              // Build test generation prompt (unit tests only)
+              const testPrompt = await buildTestGenerationPromptAfterImplementation(session.project_id, story, session.programmer_type, result.output);
+              
+              const testJob = await pool.query(
+                `INSERT INTO ai_jobs (project_id, provider, command, args, status)
+                 VALUES ($1, $2, $3, $4, $5)
+                 RETURNING *`,
+                [
+                  session.project_id,
+                  'cursor',
+                  'cursor',
+                  JSON.stringify({
+                    mode: 'agent',
+                    prompt: testPrompt,
+                    coding_session_id: codingSessionId,
+                    phase: 'test_generation_after',
+                    test_strategy: 'after',
+                    unit_tests_only: true,
+                  }),
+                  'pending'
+                ]
+              );
+              
+              await pool.query(
+                'UPDATE coding_sessions SET test_generation_job_id = $1, status = $2 WHERE id = $3',
+                [testJob.rows[0].id, 'generating_tests', codingSessionId]
+              );
+              
+              console.log(`[Worker] Test generation job ${testJob.rows[0].id} created for session ${codingSessionId} (after implementation)`);
+            }
+          } else if (testStrategy === 'none') {
+            // No testing: Mark session as done without generating or executing tests
+            await pool.query(
+              'UPDATE coding_sessions SET status = $1, implementation_progress = $2, progress = $3, completed_at = $4 WHERE id = $5',
+              ['completed', 50, 100, new Date(), codingSessionId]
+            );
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'completed', JSON.stringify({ message: 'Implementation completed successfully (no tests generated)' })]
+            );
+            console.log(`[Worker] Coding session ${codingSessionId} completed (no testing)`);
+            
+            // Automatically trigger QA session (but skip test execution)
+            try {
+              const codingSession = await pool.query(
+                'SELECT project_id FROM coding_sessions WHERE id = $1',
+                [codingSessionId]
+              );
+              
+              if (codingSession.rows.length > 0) {
+                const projectId = codingSession.rows[0].project_id;
+                
+                // Create QA session
+                const qaSession = await pool.query(
+                  'INSERT INTO qa_sessions (project_id, coding_session_id, status) VALUES ($1, $2, $3) RETURNING *',
+                  [projectId, codingSessionId, 'pending']
+                );
+                
+                const qaSessionId = qaSession.rows[0].id;
+                console.log(`[Worker] Created QA session ${qaSessionId} for coding session ${codingSessionId}`);
+                
+                // Create AI job for QA
+                const projectPathResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
+                const projectPath = projectPathResult.rows[0]?.base_path;
+                const qaPrompt = await buildQAPrompt(projectId, codingSessionId);
+                const qaJob = await pool.query(
+                  `INSERT INTO ai_jobs (project_id, provider, command, args, status)
+                   VALUES ($1, $2, $3, $4, $5)
+                   RETURNING *`,
+                  [
+                    projectId,
+                    'cursor',
+                    'cursor',
+                    JSON.stringify({
+                      mode: 'agent',
+                      prompt: qaPrompt,
+                      project_path: projectPath,
+                      qa_session_id: qaSessionId,
+                    }),
+                    'pending'
+                  ]
+                );
+                
+                // Update QA session to running
+                await pool.query(
+                  'UPDATE qa_sessions SET status = $1, started_at = $2 WHERE id = $3',
+                  ['running', new Date(), qaSessionId]
+                );
+                
+                console.log(`[Worker] QA job ${qaJob.rows[0].id} created for session ${qaSessionId}`);
+              }
+            } catch (qaError) {
+              console.error('[Worker] Error creating QA session:', qaError);
+              // Don't fail the coding session if QA creation fails
+            }
+          } else {
+            // TDD mode: Mark session as done and execute existing test suites
+            await pool.query(
+              'UPDATE coding_sessions SET status = $1, implementation_progress = $2, progress = $3, completed_at = $4 WHERE id = $5',
+              ['completed', 50, 100, new Date(), codingSessionId]
+            );
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'completed', JSON.stringify({ message: 'Implementation completed successfully' })]
+            );
+            console.log(`[Worker] Coding session ${codingSessionId} completed`);
+            
+            // Automatically execute test suites for this coding session
+            try {
+              await executeTestSuitesForSession(codingSessionId);
+            } catch (testError) {
+              console.error('[Worker] Error executing test suites:', testError);
+              // Continue even if test execution fails
+            }
+            
+            // Automatically trigger QA session
+            try {
+              const codingSession = await pool.query(
+                'SELECT project_id FROM coding_sessions WHERE id = $1',
+                [codingSessionId]
+              );
+              
+              if (codingSession.rows.length > 0) {
+                const projectId = codingSession.rows[0].project_id;
+                
+                // Create QA session
+                const qaSession = await pool.query(
+                  'INSERT INTO qa_sessions (project_id, coding_session_id, status) VALUES ($1, $2, $3) RETURNING *',
+                  [projectId, codingSessionId, 'pending']
+                );
+                
+                const qaSessionId = qaSession.rows[0].id;
+                console.log(`[Worker] Created QA session ${qaSessionId} for coding session ${codingSessionId}`);
+                
+                // Create AI job for QA
+                const projectPathResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
+                const projectPath = projectPathResult.rows[0]?.base_path;
+                const qaPrompt = await buildQAPrompt(projectId, codingSessionId);
+                const qaJob = await pool.query(
+                  `INSERT INTO ai_jobs (project_id, provider, command, args, status)
+                   VALUES ($1, $2, $3, $4, $5)
+                   RETURNING *`,
+                  [
+                    projectId,
+                    'cursor',
+                    'cursor',
+                    JSON.stringify({
+                      mode: 'agent',
+                      prompt: qaPrompt,
+                      project_path: projectPath,
+                      qa_session_id: qaSessionId,
+                    }),
+                    'pending'
+                  ]
+                );
+                
+                // Update QA session to running
+                await pool.query(
+                  'UPDATE qa_sessions SET status = $1, started_at = $2 WHERE id = $3',
+                  ['running', new Date(), qaSessionId]
+                );
+                
+                console.log(`[Worker] QA job ${qaJob.rows[0].id} created for session ${qaSessionId}`);
+              }
+            } catch (qaError) {
+              console.error('[Worker] Error creating QA session:', qaError);
+              // Don't fail the coding session if QA creation fails
+            }
           }
         } catch (error) {
           console.error('[Worker] Error completing coding session:', error);
@@ -865,14 +1006,10 @@ async function parseAndSaveTestSuites(
     }
     
     // Determine test type based on content and programmer type
+    // IMPORTANT: We always force unit tests only - ignore e2e, integration, and load tests
     const detectTestType = (code: string): 'unit' | 'integration' | 'e2e' => {
-      const lowerCode = code.toLowerCase();
-      if (lowerCode.includes('e2e') || lowerCode.includes('end-to-end') || lowerCode.includes('cypress') || lowerCode.includes('playwright')) {
-        return 'e2e';
-      }
-      if (lowerCode.includes('integration') || lowerCode.includes('api') || lowerCode.includes('endpoint')) {
-        return 'integration';
-      }
+      // Always return 'unit' - we only generate unit tests
+      // This filters out e2e, integration, and load tests as requested
       return 'unit';
     };
     
@@ -1103,6 +1240,67 @@ async function buildImplementationPrompt(project: any, story: any, programmerTyp
   lines.push(`- Write clean, maintainable, and well-documented code`);
   lines.push(`- Follow the project's architecture and coding standards`);
   lines.push(`- Make sure all generated tests pass\n`);
+  
+  return lines.join('\n');
+}
+
+// Helper function to build test generation prompt after implementation
+async function buildTestGenerationPromptAfterImplementation(
+  projectId: string,
+  story: any,
+  programmerType: string,
+  implementationOutput: string
+): Promise<string> {
+  const lines: string[] = [];
+  
+  lines.push(`# Unit Test Generation Task: ${story.title}\n`);
+  lines.push(`**Programmer Type**: ${programmerType}\n`);
+  lines.push(`**Priority**: ${story.priority}\n\n`);
+  
+  if (story.description) {
+    lines.push(`## User Story\n`);
+    lines.push(`${story.description}\n\n`);
+  }
+  
+  lines.push(`## Instructions\n`);
+  lines.push(`You are a QA engineer. Your task is to generate UNIT TESTS ONLY for the already implemented code.\n\n`);
+  lines.push(`**IMPORTANT: Generate ONLY unit tests. Do NOT generate integration tests, E2E tests, or load tests.**\n\n`);
+  lines.push(`Unit tests should test individual functions, methods, or components in isolation.\n\n`);
+  
+  lines.push(`## Implemented Code\n`);
+  lines.push(`The following code has been implemented:\n`);
+  lines.push(`\`\`\`\n`);
+  lines.push(implementationOutput.substring(0, 5000)); // Limit to avoid token limits
+  lines.push(`\n...\n`);
+  lines.push(`\`\`\`\n\n`);
+  
+  if (programmerType === 'backend') {
+    lines.push(`Generate UNIT tests for:`);
+    lines.push(`- Individual functions and methods (in isolation)`);
+    lines.push(`- Business logic and services (mocked dependencies)`);
+    lines.push(`- Error handling and validation\n`);
+    lines.push(`Use testing frameworks like Jest, Mocha, or similar.\n`);
+    lines.push(`Mock external dependencies like database, APIs, etc.\n`);
+  } else if (programmerType === 'frontend') {
+    lines.push(`Generate UNIT tests for:`);
+    lines.push(`- Individual React components (in isolation)`);
+    lines.push(`- Component props and rendering`);
+    lines.push(`- Component state and methods\n`);
+    lines.push(`Use testing frameworks like Jest, React Testing Library, or similar.\n`);
+    lines.push(`Mock external dependencies and API calls.\n`);
+  } else {
+    lines.push(`Generate UNIT tests for both:`);
+    lines.push(`- Backend: Individual functions, methods, business logic (in isolation, with mocked dependencies)`);
+    lines.push(`- Frontend: Individual components, props, state (in isolation, with mocked dependencies)\n`);
+  }
+  
+  lines.push(`\n## Output Format\n`);
+  lines.push(`Provide the test code in the following format:\n`);
+  lines.push(`\`\`\`\n`);
+  lines.push(`// Test file path: path/to/test/file.test.js\n`);
+  lines.push(`// Unit test code here...\n`);
+  lines.push(`\`\`\`\n`);
+  lines.push(`\nGenerate complete, runnable UNIT test suites that cover the implemented code. Focus on testing individual units in isolation.`);
   
   return lines.join('\n');
 }

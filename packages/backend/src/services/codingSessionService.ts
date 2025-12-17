@@ -47,33 +47,89 @@ export class CodingSessionService {
       programmer_type: data.programmer_type,
     });
 
-    // Step 1: Create AI job for TEST GENERATION first
-    const testPrompt = this.buildTestGenerationPrompt(story, data.programmer_type);
-    const testJob = await this.aiService.createAIJob({
-      project_id: data.project_id,
-      task_id: data.story_id,
-      provider: data.provider || 'cursor',
-      mode: 'agent',
-      prompt: testPrompt,
-    });
-
-    // Update session with test generation job ID and status
     const { Pool } = await import('pg');
     const pool = (await import('../config/database')).default;
-    
-    await this.sessionRepo.update(session.id, {
-      status: 'generating_tests',
-      test_generation_job_id: testJob.id,
-      progress: 0,
-      test_progress: 0,
-      implementation_progress: 0,
-    });
+    const testStrategy = data.test_strategy || 'tdd';
 
-    // Update AI job args to include coding_session_id
-    await pool.query(
-      `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
-      [JSON.stringify({ coding_session_id: session.id, phase: 'test_generation' }), testJob.id]
-    );
+    // Store test strategy in session metadata (using a custom field or we can add it to the database schema later)
+    // For now, we'll pass it via AI job args
+
+    if (testStrategy === 'tdd') {
+      // TDD: Generate tests BEFORE implementation
+      // Step 1: Create AI job for TEST GENERATION first
+      const testPrompt = this.buildTestGenerationPrompt(story, data.programmer_type, true);
+      const testJob = await this.aiService.createAIJob({
+        project_id: data.project_id,
+        task_id: data.story_id,
+        provider: data.provider || 'cursor',
+        mode: 'agent',
+        prompt: testPrompt,
+      });
+
+      await this.sessionRepo.update(session.id, {
+        status: 'generating_tests',
+        test_generation_job_id: testJob.id,
+        progress: 0,
+        test_progress: 0,
+        implementation_progress: 0,
+      });
+
+      // Update AI job args to include coding_session_id and test_strategy
+      await pool.query(
+        `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+        [JSON.stringify({ coding_session_id: session.id, phase: 'test_generation', test_strategy: 'tdd', unit_tests_only: true }), testJob.id]
+      );
+    } else if (testStrategy === 'after') {
+      // 'after': Skip test generation, start implementation directly, generate tests after
+      const implementationPrompt = this.buildImplementationPrompt(story, data.programmer_type, undefined);
+      const implJob = await this.aiService.createAIJob({
+        project_id: data.project_id,
+        task_id: data.story_id,
+        provider: data.provider || 'cursor',
+        mode: 'agent',
+        prompt: implementationPrompt,
+      });
+
+      await this.sessionRepo.update(session.id, {
+        status: 'running',
+        ai_job_id: implJob.id,
+        implementation_job_id: implJob.id,
+        progress: 0,
+        test_progress: 0,
+        implementation_progress: 0,
+      });
+
+      // Update AI job args to include coding_session_id and test_strategy
+      await pool.query(
+        `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+        [JSON.stringify({ coding_session_id: session.id, phase: 'implementation', test_strategy: 'after', unit_tests_only: true }), implJob.id]
+      );
+    } else {
+      // 'none': Skip test generation entirely, start implementation directly, no tests after
+      const implementationPrompt = this.buildImplementationPrompt(story, data.programmer_type, undefined);
+      const implJob = await this.aiService.createAIJob({
+        project_id: data.project_id,
+        task_id: data.story_id,
+        provider: data.provider || 'cursor',
+        mode: 'agent',
+        prompt: implementationPrompt,
+      });
+
+      await this.sessionRepo.update(session.id, {
+        status: 'running',
+        ai_job_id: implJob.id,
+        implementation_job_id: implJob.id,
+        progress: 0,
+        test_progress: 0,
+        implementation_progress: 0,
+      });
+
+      // Update AI job args to include coding_session_id and test_strategy
+      await pool.query(
+        `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+        [JSON.stringify({ coding_session_id: session.id, phase: 'implementation', test_strategy: 'none' }), implJob.id]
+      );
+    }
 
     return session;
   }
@@ -102,6 +158,7 @@ export class CodingSessionService {
           project_id: data.project_id,
           story_id: storyId,
           programmer_type: programmerType,
+          test_strategy: data.test_strategy || 'tdd',
         });
         sessions.push(session);
       } catch (error: any) {
@@ -319,7 +376,7 @@ export class CodingSessionService {
   /**
    * Build test generation prompt
    */
-  private buildTestGenerationPrompt(story: any, programmerType: ProgrammerType): string {
+  private buildTestGenerationPrompt(story: any, programmerType: ProgrammerType, unitTestsOnly: boolean = true): string {
     const lines: string[] = [];
 
     lines.push(`# Test Generation Task: ${story.title}\n`);
@@ -334,24 +391,40 @@ export class CodingSessionService {
     lines.push(`## Instructions\n`);
     lines.push(`You are a QA engineer. Your task is to generate comprehensive test suites BEFORE implementation.\n\n`);
     
+    if (unitTestsOnly) {
+      lines.push(`**IMPORTANT: Generate ONLY unit tests. Do NOT generate integration tests, E2E tests, or load tests.**\n\n`);
+      lines.push(`Unit tests should test individual functions, methods, or components in isolation.\n\n`);
+    }
+    
     if (programmerType === 'backend') {
-      lines.push(`Generate tests for:`);
-      lines.push(`- API endpoints and routes`);
-      lines.push(`- Database models and repositories`);
-      lines.push(`- Business logic and services`);
+      lines.push(`Generate ${unitTestsOnly ? 'UNIT ' : ''}tests for:`);
+      lines.push(`- Individual functions and methods`);
+      lines.push(`- Business logic and services (in isolation)`);
       lines.push(`- Error handling and validation\n`);
+      if (!unitTestsOnly) {
+        lines.push(`- API endpoints and routes`);
+        lines.push(`- Database models and repositories\n`);
+      }
       lines.push(`Use testing frameworks like Jest, Mocha, or similar.\n`);
     } else if (programmerType === 'frontend') {
-      lines.push(`Generate tests for:`);
-      lines.push(`- React components`);
-      lines.push(`- User interactions and UI flows`);
-      lines.push(`- State management`);
-      lines.push(`- API integration\n`);
+      lines.push(`Generate ${unitTestsOnly ? 'UNIT ' : ''}tests for:`);
+      lines.push(`- Individual React components (in isolation)`);
+      lines.push(`- Component props and rendering`);
+      lines.push(`- Component state and methods\n`);
+      if (!unitTestsOnly) {
+        lines.push(`- User interactions and UI flows`);
+        lines.push(`- State management`);
+        lines.push(`- API integration\n`);
+      }
       lines.push(`Use testing frameworks like Jest, React Testing Library, or similar.\n`);
     } else {
-      lines.push(`Generate tests for both:`);
-      lines.push(`- Backend: API endpoints, services, database operations`);
-      lines.push(`- Frontend: Components, user flows, state management\n`);
+      lines.push(`Generate ${unitTestsOnly ? 'UNIT ' : ''}tests for both:`);
+      lines.push(`- Backend: Individual functions, methods, business logic (in isolation)`);
+      lines.push(`- Frontend: Individual components, props, state (in isolation)\n`);
+      if (!unitTestsOnly) {
+        lines.push(`- Backend: API endpoints, services, database operations`);
+        lines.push(`- Frontend: User flows, state management\n`);
+      }
     }
 
     lines.push(`\n## Output Format\n`);
@@ -360,9 +433,16 @@ export class CodingSessionService {
     lines.push(`// Test file path: path/to/test/file.test.js\n`);
     lines.push(`// Test code here...\n`);
     lines.push(`\`\`\`\n`);
-    lines.push(`\nGenerate complete, runnable test suites that cover all acceptance criteria from the user story.`);
+    lines.push(`\nGenerate complete, runnable ${unitTestsOnly ? 'unit ' : ''}test suites that cover all acceptance criteria from the user story.`);
 
     return lines.join('\n');
+  }
+
+  /**
+   * Build implementation prompt (alias for buildCodingPrompt)
+   */
+  private buildImplementationPrompt(story: any, programmerType: ProgrammerType, testsOutput?: string): string {
+    return this.buildCodingPrompt(story, programmerType, testsOutput);
   }
 
   /**

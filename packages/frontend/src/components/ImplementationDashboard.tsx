@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CodingSession, Task, ImplementationDashboard as IDashboard } from '@devflow-studio/shared';
+import { CodingSession, Task, ImplementationDashboard as IDashboard, TestStrategy } from '@devflow-studio/shared';
 import { codingSessionsApi } from '../api/codingSessions';
 import { tasksApi } from '../api/tasks';
 import { useToast } from '../context/ToastContext';
@@ -16,6 +16,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [viewingSession, setViewingSession] = useState<CodingSession | null>(null);
+  const [testStrategy, setTestStrategy] = useState<TestStrategy>('tdd');
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -72,6 +73,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
         project_id: projectId,
         story_ids: Array.from(selectedStories),
         auto_assign: true,
+        test_strategy: testStrategy,
       });
 
       showToast(result.message, 'success');
@@ -358,6 +360,66 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
             </button>
           </div>
           <div className="p-6">
+            {/* Test Strategy Configuration */}
+            <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                Testing Strategy
+              </label>
+              <div className="space-y-3">
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="testStrategy"
+                    value="tdd"
+                    checked={testStrategy === 'tdd'}
+                    onChange={(e) => setTestStrategy(e.target.value as TestStrategy)}
+                    className="w-4 h-4 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                  />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">TDD (Test-Driven Development)</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Generate unit tests BEFORE implementation. Code is written to pass the tests.
+                    </div>
+                  </div>
+                </label>
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="testStrategy"
+                    value="after"
+                    checked={testStrategy === 'after'}
+                    onChange={(e) => setTestStrategy(e.target.value as TestStrategy)}
+                    className="w-4 h-4 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                  />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">Generate Unit Tests After Coding</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Implement code first, then generate unit tests. Only unit tests will be generated (no e2e, integration, or load tests).
+                    </div>
+                  </div>
+                </label>
+                <label className="flex items-center space-x-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="testStrategy"
+                    value="none"
+                    checked={testStrategy === 'none'}
+                    onChange={(e) => setTestStrategy(e.target.value as TestStrategy)}
+                    className="w-4 h-4 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                  />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">No Testing</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Skip test generation entirely. Only implement the code without any tests.
+                    </div>
+                  </div>
+                </label>
+              </div>
+              <div className="mt-3 text-xs text-gray-500 dark:text-gray-400 italic">
+                Note: When "Generate Unit Tests After Coding" or "TDD" is selected, only unit tests will be generated. E2E, integration, and load tests are omitted.
+              </div>
+            </div>
+
             <div className="space-y-2">
               {availableStories.map((story) => (
                 <label
