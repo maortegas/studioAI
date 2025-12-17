@@ -6,7 +6,8 @@ import {
   CreateQASessionRequest,
   QADashboard,
   TestResult,
-  QAReport
+  QAReport,
+  TestType
 } from '@devflow-studio/shared';
 import { readFile } from '../utils/fileSystem';
 import path from 'path';
@@ -30,6 +31,7 @@ export class QAService {
     const session = await this.qaRepo.create({
       project_id: data.project_id,
       coding_session_id: data.coding_session_id,
+      test_type: data.test_type,
     });
 
     // If auto_run is true, create AI job for QA execution
@@ -75,71 +77,28 @@ export class QAService {
   }
 
   /**
-   * Generate tests only (without running them) - One job per functionality
+   * Generate test plan (without running tests) - Creates a plan for user review
    */
-  async generateTests(projectId: string, codingSessionId?: string): Promise<QASession> {
+  async generateTests(projectId: string, codingSessionId?: string, testType?: TestType): Promise<QASession> {
     const session = await this.qaRepo.create({
       project_id: projectId,
       coding_session_id: codingSessionId,
+      test_type: testType,
     });
 
-    const project = await this.projectRepo.findById(projectId);
-    if (!project) {
-      throw new Error('Project not found');
-    }
-
-    // Get user stories to generate tests for each functionality
-    const { TaskRepository } = await import('../repositories/taskRepository');
-    const taskRepo = new TaskRepository();
-    const stories = await taskRepo.findByProjectIdAndType(projectId, 'story');
-
-    if (stories.length === 0) {
-      // No stories, generate general tests
-      const prompt = await this.buildTestGenerationPromptForStory(projectId, null, codingSessionId);
-      await this.aiService.createAIJob({
+    // Generate test plan for ALL test types (not just integration)
+    const { IntegrationTestPlanService } = await import('./integrationTestPlanService');
+    const planService = new IntegrationTestPlanService();
+    await planService.generatePlan({
         project_id: projectId,
-        provider: 'cursor',
-        mode: 'agent',
-        prompt,
-        skipBundle: true,
-      }, {
+      coding_session_id: codingSessionId,
         qa_session_id: session.id,
-        phase: 'test_generation',
-        story_index: 0,
-        total_stories: 1,
-      });
-    } else {
-      // Create one job per story/functionality
-      for (let i = 0; i < stories.length; i++) {
-        const story = stories[i];
-        const prompt = await this.buildTestGenerationPromptForStory(projectId, story, codingSessionId);
-        
-        await this.aiService.createAIJob({
-          project_id: projectId,
-          provider: 'cursor',
-          mode: 'agent',
-          prompt,
-          skipBundle: true,
-          task_id: story.id, // Link to the story
-        }, {
-          qa_session_id: session.id,
-          phase: 'test_generation',
-          story_id: story.id,
-          story_index: i,
-          total_stories: stories.length,
-        });
+      test_type: testType || 'unit',
+    });
 
-        // Small delay between creating jobs to avoid overwhelming the system
-        if (i < stories.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-    }
-
-    // Update session status to running
+    // Update session status to pending (not running - waiting for user approval)
     await this.qaRepo.update(session.id, {
-      status: 'running',
-      started_at: new Date(),
+      status: 'pending',
     });
 
     return session;
@@ -151,7 +110,8 @@ export class QAService {
   private async buildTestGenerationPromptForStory(
     projectId: string, 
     story: any | null, 
-    codingSessionId?: string
+    codingSessionId?: string,
+    testType?: TestType
   ): Promise<string> {
     const project = await this.projectRepo.findById(projectId);
     if (!project) {
@@ -175,8 +135,24 @@ export class QAService {
     }
     
     lines.push(`Stack: ${stack}`);
+    
+    // Build prompt based on test type
+    if (testType === 'unit') {
+      lines.push(`Create UNIT tests only. Test individual functions, methods, and components in isolation. Mock all external dependencies.`);
+    } else if (testType === 'integration') {
+      lines.push(`Create INTEGRATION tests only. Test API endpoints, database interactions, and service integrations.`);
+    } else if (testType === 'e2e') {
+      lines.push(`Create END-TO-END (E2E) tests only. Test complete user flows from start to finish. Use tools like Cypress, Playwright, or Selenium.`);
+    } else if (testType === 'contract') {
+      lines.push(`Create CONTRACT tests (consumer/provider) only. Test API contracts between services. Use tools like Pact or similar contract testing frameworks.`);
+    } else if (testType === 'load') {
+      lines.push(`Create LOAD/PERFORMANCE tests only for CRITICAL processes. Test system performance under load for critical endpoints and processes. Use tools like JMeter, k6, or Gatling. Focus only on performance-critical functionality.`);
+    } else {
+      // Default: generate unit and integration tests
     lines.push(`Create unit tests (services) and integration tests (REST endpoints) for this functionality.`);
-    lines.push(`Output JSON: {"summary":{"total":0,"passed":0,"failed":0,"skipped":0},"tests":[{"name":"test","type":"unit|integration","status":"passed","duration":100}],"test_code":"// test code","recommendations":["rec"]}`);
+    }
+    
+    lines.push(`Output JSON: {"summary":{"total":0,"passed":0,"failed":0,"skipped":0},"tests":[{"name":"test","type":"${testType || 'unit|integration'}","status":"passed","duration":100}],"test_code":"// test code","recommendations":["rec"]}`);
 
     return lines.join(' ');
   }
@@ -199,10 +175,41 @@ export class QAService {
     lines.push(`## Instructions\n`);
     lines.push(`You are an automated QA engineer. Your task is to:\n`);
     lines.push(`1. Analyze the codebase structure\n`);
+    
+    // Build instructions based on test type
+    if (session.test_type === 'unit') {
+      lines.push(`2. Generate and execute UNIT tests:\n`);
+      lines.push(`   - Test individual functions, methods, and components in isolation\n`);
+      lines.push(`   - Mock all external dependencies (databases, APIs, services)\n`);
+      lines.push(`   - Focus on business logic and edge cases\n`);
+    } else if (session.test_type === 'integration') {
+      lines.push(`2. Generate and execute INTEGRATION tests:\n`);
+      lines.push(`   - Test API endpoints and their interactions\n`);
+      lines.push(`   - Test database operations and transactions\n`);
+      lines.push(`   - Test service-to-service communication\n`);
+    } else if (session.test_type === 'e2e') {
+      lines.push(`2. Generate and execute END-TO-END (E2E) tests:\n`);
+      lines.push(`   - Test complete user flows from start to finish\n`);
+      lines.push(`   - Test critical business scenarios\n`);
+      lines.push(`   - Use browser automation tools (Cypress, Playwright, Selenium)\n`);
+    } else if (session.test_type === 'contract') {
+      lines.push(`2. Generate and execute CONTRACT tests:\n`);
+      lines.push(`   - Test API contracts between consumer and provider services\n`);
+      lines.push(`   - Verify request/response schemas match expectations\n`);
+      lines.push(`   - Use contract testing tools (Pact, Spring Cloud Contract)\n`);
+    } else if (session.test_type === 'load') {
+      lines.push(`2. Generate and execute LOAD/PERFORMANCE tests for CRITICAL processes only:\n`);
+      lines.push(`   - Test system performance under various load conditions for critical processes\n`);
+      lines.push(`   - Measure response times, throughput, and resource usage\n`);
+      lines.push(`   - Use load testing tools (JMeter, k6, Gatling)\n`);
+    } else {
+      // Default: comprehensive test suite
     lines.push(`2. Generate comprehensive test suites:\n`);
     lines.push(`   - Unit tests for individual functions/components\n`);
     lines.push(`   - Integration tests for API endpoints and services\n`);
     lines.push(`   - E2E tests for critical user flows\n`);
+    }
+    
     lines.push(`3. Execute the tests and report results\n`);
     lines.push(`4. Calculate code coverage if possible\n`);
     lines.push(`5. Provide recommendations for improvements\n\n`);
@@ -212,6 +219,12 @@ export class QAService {
     }
 
     lines.push(`## Output Format\n`);
+    lines.push(`**CRITICAL INSTRUCTIONS:**\n`);
+    lines.push(`1. You MUST include the complete JSON results directly in your response\n`);
+    lines.push(`2. Do NOT mention creating files, saving files, or file names\n`);
+    lines.push(`3. Do NOT just describe the results - you MUST include the actual JSON object\n`);
+    lines.push(`4. Your response must contain a \`\`\`json code block with the complete results\n`);
+    lines.push(`5. Start your response with the JSON results, not with descriptions\n\n`);
     lines.push(`Provide test results in the following JSON format:\n`);
     lines.push(`\`\`\`json\n`);
     lines.push(`{\n`);
@@ -233,7 +246,8 @@ export class QAService {
     lines.push(`  ],\n`);
     lines.push(`  "recommendations": ["recommendation 1", "recommendation 2"]\n`);
     lines.push(`}\n`);
-    lines.push(`\`\`\`\n`);
+    lines.push(`\`\`\`\n\n`);
+    lines.push(`**FINAL REMINDER: Your response MUST start with or contain the complete JSON object in a \`\`\`json code block. Do NOT write descriptions before the JSON. Start directly with the \`\`\`json block.**\n\n`);
 
     return lines.join('\n');
   }

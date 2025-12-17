@@ -39,7 +39,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
               if (isImproving) {
                 await processImprovedStory(result.output);
               } else {
-                await processGeneratedStories(result.output);
+              await processGeneratedStories(result.output);
               }
               setGenerating(false);
               setIsImproving(false);
@@ -47,7 +47,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
               if (isImproving) {
                 showToast('Story improved! Review and save it.', 'success');
               } else {
-                showToast('User stories generated! Review and save them.', 'success');
+              showToast('User stories generated! Review and save them.', 'success');
               }
             } catch (error) {
               console.error('Failed to get job result:', error);
@@ -62,7 +62,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
             if (isImproving) {
               showToast('Story improvement failed', 'error');
             } else {
-              showToast('User stories generation failed', 'error');
+            showToast('User stories generation failed', 'error');
             }
           } else {
             setTimeout(checkJobStatus, 2000);

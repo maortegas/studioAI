@@ -16,10 +16,16 @@ const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [toastCounter, setToastCounter] = useState(0);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info', duration?: number) => {
-    const id = `toast-${Date.now()}`;
-    setToasts((prev) => [...prev, { id, message, type, duration }]);
+    // Use counter + timestamp to ensure unique IDs even if called rapidly
+    setToastCounter((prev) => {
+      const newCounter = prev + 1;
+      const id = `toast-${Date.now()}-${newCounter}`;
+      setToasts((prevToasts) => [...prevToasts, { id, message, type, duration }]);
+      return newCounter;
+    });
   };
 
   const removeToast = (id: string) => {

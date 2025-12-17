@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { QADashboard as QADashboardType, QASession, QAReport, TestResult } from '@devflow-studio/shared';
+import { QADashboard as QADashboardType, QASession, QAReport, TestResult, TestType } from '@devflow-studio/shared';
 import { qaApi } from '../api/qa';
 import { useToast } from '../context/ToastContext';
+import IntegrationTestPlanEditor from './IntegrationTestPlanEditor';
 
 interface QADashboardProps {
   projectId: string;
@@ -18,10 +19,15 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   const [selectedSession, setSelectedSession] = useState<QAReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [generatingTests, setGeneratingTests] = useState(false);
+  const [generatingTestType, setGeneratingTestType] = useState<TestType | null>(null);
   const [runningQA, setRunningQA] = useState<string | null>(null);
   const [testFiles, setTestFiles] = useState<TestFile[]>([]);
   const [editingTest, setEditingTest] = useState<{ sessionId: string; fileName: string; content: string } | null>(null);
   const [loadingTestFiles, setLoadingTestFiles] = useState(false);
+  const [selectedTestType, setSelectedTestType] = useState<TestType | 'all'>('all');
+  const [showIntegrationPlan, setShowIntegrationPlan] = useState(false);
+  const [integrationPlanSessionId, setIntegrationPlanSessionId] = useState<string | null>(null);
+  const [planTestType, setPlanTestType] = useState<TestType | undefined>(undefined);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -45,12 +51,20 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   };
 
   const handleViewSession = async (sessionId: string) => {
+    if (!sessionId || sessionId === 'undefined') {
+      console.warn('Cannot view session: sessionId is undefined');
+      showToast('Invalid session ID', 'error');
+      return;
+    }
+    
     try {
       const report = await qaApi.getSession(sessionId);
       setSelectedSession(report);
       
-      // Load test files for this session
+      // Load test files for this session (only if sessionId is valid)
+      if (sessionId && sessionId !== 'undefined') {
       await loadTestFiles(sessionId);
+      }
     } catch (error) {
       console.error('Failed to load QA session:', error);
       showToast('Failed to load QA session', 'error');
@@ -58,6 +72,12 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   };
 
   const loadTestFiles = async (sessionId: string) => {
+    if (!sessionId || sessionId === 'undefined') {
+      console.warn('Cannot load test files: sessionId is undefined');
+      setTestFiles([]);
+      return;
+    }
+    
     setLoadingTestFiles(true);
     try {
       const files = await qaApi.getTestFiles(sessionId);
@@ -71,6 +91,11 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   };
 
   const handleEditTest = async (sessionId: string, fileName: string) => {
+    if (!sessionId || sessionId === 'undefined') {
+      showToast('Cannot edit: Invalid session ID', 'error');
+      return;
+    }
+    
     try {
       const response = await qaApi.getTestFileContent(sessionId, fileName);
       setEditingTest({ sessionId, fileName, content: response.content });
@@ -82,17 +107,28 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   const handleSaveTest = async () => {
     if (!editingTest) return;
 
+    if (!editingTest.sessionId || editingTest.sessionId === 'undefined') {
+      showToast('Cannot save: Invalid session ID', 'error');
+      return;
+    }
+
     try {
       await qaApi.updateTestFile(editingTest.sessionId, editingTest.fileName, editingTest.content);
       showToast('Test file updated successfully', 'success');
+      const sessionId = editingTest.sessionId; // Save before clearing
       setEditingTest(null);
-      await loadTestFiles(editingTest.sessionId);
+      await loadTestFiles(sessionId);
     } catch (error: any) {
       showToast(error.response?.data?.error || 'Failed to update test file', 'error');
     }
   };
 
   const handleDeleteTest = async (sessionId: string, fileName: string) => {
+    if (!sessionId || sessionId === 'undefined') {
+      showToast('Cannot delete: Invalid session ID', 'error');
+      return;
+    }
+
     if (!confirm(`Are you sure you want to delete ${fileName}?`)) {
       return;
     }
@@ -128,6 +164,13 @@ export default function QADashboard({ projectId }: QADashboardProps) {
     } finally {
       setGeneratingTests(false);
     }
+  };
+
+  const handleGenerateTestsByType = async (testType: TestType) => {
+    // Open modal to create plan (manual or with AI) - don't create session yet
+    setPlanTestType(testType);
+    setIntegrationPlanSessionId(null); // No session yet, will be created when plan is saved/generated
+    setShowIntegrationPlan(true);
   };
 
   const handleRunQA = async (sessionId: string) => {
@@ -190,6 +233,10 @@ export default function QADashboard({ projectId }: QADashboardProps) {
         return 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300';
       case 'e2e':
         return 'bg-pink-100 dark:bg-pink-900/30 text-pink-800 dark:text-pink-300';
+      case 'contract':
+        return 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-300';
+      case 'load':
+        return 'bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300';
       case 'performance':
         return 'bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300';
       case 'security':
@@ -199,6 +246,25 @@ export default function QADashboard({ projectId }: QADashboardProps) {
     }
   };
 
+  const getTestTypeLabel = (type: TestType) => {
+    switch (type) {
+      case 'unit':
+        return 'Unit Tests';
+      case 'integration':
+        return 'Integration Tests';
+      case 'e2e':
+        return 'E2E Tests';
+      case 'contract':
+        return 'Contract Tests';
+      case 'load':
+        return 'Load Tests';
+      default:
+        return type;
+    }
+  };
+
+  const testTypes: TestType[] = ['unit', 'integration', 'e2e', 'contract', 'load'];
+
   if (loading) {
     return <div className="text-center py-8 text-gray-900 dark:text-white">Loading QA dashboard...</div>;
   }
@@ -207,22 +273,72 @@ export default function QADashboard({ projectId }: QADashboardProps) {
     return <div className="text-center py-8 text-gray-900 dark:text-white">No QA data available</div>;
   }
 
+  // Filter sessions by selected test type (after dashboard is confirmed to exist)
+  const filteredSessions = selectedTestType === 'all' 
+    ? (dashboard.recent_sessions || [])
+    : (dashboard.recent_sessions || []).filter(s => s.test_type === selectedTestType);
+
   const passRate = dashboard.total_sessions > 0
     ? Math.round((dashboard.passed_sessions / dashboard.total_sessions) * 100)
     : 0;
 
   return (
     <div className="space-y-6">
+      {/* Test Plan Editor - Show when explicitly opened for any test type (Integration, E2E, etc.) */}
+      {showIntegrationPlan && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Test Plan</h2>
+            <button
+              onClick={() => {
+                setShowIntegrationPlan(false);
+                setIntegrationPlanSessionId(null);
+              }}
+              className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="p-6">
+            <IntegrationTestPlanEditor
+              projectId={projectId}
+              qaSessionId={integrationPlanSessionId || undefined}
+              codingSessionId={undefined}
+              testType={planTestType || (selectedTestType !== 'all' ? selectedTestType : undefined)}
+              onPlanExecuted={(qaSessionId) => {
+                // Only close modal when user explicitly executes tests
+                // NOT when plan is generated - user must approve and execute manually
+                showToast('Test execution started', 'success');
+                setShowIntegrationPlan(false);
+                setIntegrationPlanSessionId(null);
+                loadDashboard();
+              }}
+              onSessionCreated={(qaSessionId) => {
+                // Update session ID when a new session is created during plan generation
+                setIntegrationPlanSessionId(qaSessionId);
+              }}
+              onClose={() => {
+                setShowIntegrationPlan(false);
+                setIntegrationPlanSessionId(null);
+                setPlanTestType(undefined);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Manual Actions */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
         <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white">QA Actions</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Generate tests or run QA manually (QA also runs automatically after coding sessions)
+            Generate tests by type or run QA manually (QA also runs automatically after coding sessions)
           </p>
         </div>
         <div className="p-6">
-          <div className="flex space-x-4">
+          <div className="mb-4">
             <button
               onClick={handleGenerateTests}
               disabled={generatingTests}
@@ -231,16 +347,35 @@ export default function QADashboard({ projectId }: QADashboardProps) {
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              <span>{generatingTests ? 'Generating Tests...' : 'Generate Tests'}</span>
+              <span>{generatingTests ? 'Generating Tests...' : 'Generate All Tests'}</span>
             </button>
-            <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center">
-              <span>💡 Tests are automatically generated during coding sessions</span>
+          </div>
+          
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Generate Tests by Type</h3>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {testTypes.map((testType) => (
+                <button
+                  key={testType}
+                  onClick={() => handleGenerateTestsByType(testType)}
+                  disabled={generatingTestType === testType}
+                  className={`flex items-center justify-center space-x-2 px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed ${getTestTypeColor(testType)}`}
+                >
+                  <span className="text-sm font-medium">
+                    {generatingTestType === testType ? 'Generating...' : getTestTypeLabel(testType)}
+                  </span>
+                </button>
+              ))}
             </div>
+          </div>
+          
+          <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center">
+            <span>💡 Tests are automatically generated during coding sessions. Unit tests come from implementation.</span>
           </div>
         </div>
       </div>
 
-      {/* Statistics */}
+      {/* Overall Statistics */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-blue-500">
           <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.total_sessions}</div>
@@ -262,6 +397,53 @@ export default function QADashboard({ projectId }: QADashboardProps) {
         </div>
       </div>
 
+      {/* Statistics by Test Type */}
+      {dashboard.by_type && Object.keys(dashboard.by_type).length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Metrics by Test Type</h2>
+          </div>
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {testTypes.map((testType) => {
+                const typeStats = dashboard.by_type?.[testType];
+                if (!typeStats) return null;
+                
+                return (
+                  <div key={testType} className={`border rounded-lg p-4 ${getTestTypeColor(testType)}`}>
+                    <div className="text-sm font-medium mb-3">{getTestTypeLabel(testType)}</div>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Sessions:</span>
+                        <span className="font-semibold">{typeStats.total_sessions}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-green-600 dark:text-green-400">Passed:</span>
+                        <span className="font-semibold">{typeStats.passed_sessions}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-red-600 dark:text-red-400">Failed:</span>
+                        <span className="font-semibold">{typeStats.failed_sessions}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Pass Rate:</span>
+                        <span className="font-semibold">{typeStats.pass_rate}%</span>
+                      </div>
+                      {typeStats.average_coverage && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">Coverage:</span>
+                          <span className="font-semibold">{Math.round(typeStats.average_coverage)}%</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pass Rate */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-6">
         <div className="flex justify-between items-center mb-2">
@@ -281,12 +463,25 @@ export default function QADashboard({ projectId }: QADashboardProps) {
       {/* Recent Sessions */}
       {dashboard.recent_sessions.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
-          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Recent QA Sessions</h2>
+            <div className="flex items-center space-x-2">
+              <label className="text-sm text-gray-600 dark:text-gray-400">Filter by type:</label>
+              <select
+                value={selectedTestType}
+                onChange={(e) => setSelectedTestType(e.target.value as TestType | 'all')}
+                className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
+                <option value="all">All Types</option>
+                {testTypes.map((type) => (
+                  <option key={type} value={type}>{getTestTypeLabel(type)}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="p-6">
             <div className="space-y-3">
-              {dashboard.recent_sessions.map((session) => {
+              {filteredSessions.map((session) => {
                 const successRate = session.total_tests > 0
                   ? Math.round((session.passed_tests / session.total_tests) * 100)
                   : 0;
@@ -304,6 +499,26 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                             <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(session.status)}`}>
                               {session.status}
                             </span>
+                            {session.test_type && (
+                              <span className={`px-2 py-1 text-xs rounded-full font-medium ${getTestTypeColor(session.test_type)}`}>
+                                {getTestTypeLabel(session.test_type)}
+                              </span>
+                            )}
+                            {/* Show Plan button for pending sessions or sessions with plans */}
+                            {(session.status === 'pending' || session.status === 'running') && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setIntegrationPlanSessionId(session.id);
+                                  setPlanTestType(session.test_type);
+                                  setShowIntegrationPlan(true);
+                                }}
+                                className={`px-2 py-1 text-xs text-white rounded-lg transition hover:opacity-80 ${getTestTypeColor(session.test_type || 'unit')}`}
+                                title="View/Edit Test Plan"
+                              >
+                                📋 Plan
+                              </button>
+                            )}
                             {session.coding_session_id && (
                               <span className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
                                 Auto-triggered
@@ -396,7 +611,13 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-semibold">Test Files</h3>
                     <button
-                      onClick={() => selectedSession && loadTestFiles(selectedSession.id)}
+                      onClick={() => {
+                        if (selectedSession?.id && selectedSession.id !== 'undefined') {
+                          loadTestFiles(selectedSession.id);
+                        } else {
+                          showToast('Cannot refresh: Invalid session ID', 'error');
+                        }
+                      }}
                       className="text-sm text-blue-600 hover:text-blue-800"
                     >
                       Refresh
@@ -583,11 +804,21 @@ export default function QADashboard({ projectId }: QADashboardProps) {
         </div>
       )}
 
+      {filteredSessions.length === 0 && dashboard.recent_sessions.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-12 text-center">
+          <div className="text-4xl mb-4">🔍</div>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No Sessions for Selected Type</h3>
+          <p className="text-gray-500 dark:text-gray-400">
+            No QA sessions found for {selectedTestType === 'all' ? 'all types' : getTestTypeLabel(selectedTestType)}.
+          </p>
+        </div>
+      )}
+
       {dashboard.recent_sessions.length === 0 && (
-        <div className="bg-white rounded-lg shadow p-12 text-center">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-12 text-center">
           <div className="text-4xl mb-4">🧪</div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">No QA Sessions Yet</h3>
-          <p className="text-gray-500">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No QA Sessions Yet</h3>
+          <p className="text-gray-500 dark:text-gray-400">
             QA sessions are automatically created when coding sessions complete.
           </p>
         </div>

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { QAService } from '../services/qaService';
-import { CreateQASessionRequest } from '@devflow-studio/shared';
+import { CreateQASessionRequest, TestType } from '@devflow-studio/shared';
 
 const router = Router();
 const qaService = new QAService();
@@ -66,19 +66,51 @@ router.get('/project/:projectId', async (req: Request, res: Response) => {
 // Generate tests manually
 router.post('/generate-tests', async (req: Request, res: Response) => {
   try {
-    const { project_id, coding_session_id } = req.body;
+    const { project_id, coding_session_id, test_type } = req.body;
 
     if (!project_id) {
       return res.status(400).json({ error: 'project_id is required' });
     }
 
-    const session = await qaService.generateTests(project_id, coding_session_id);
+    const session = await qaService.generateTests(project_id, coding_session_id, test_type);
     res.json({ session, message: 'Test generation started' });
   } catch (error: any) {
     console.error('Error generating tests:', error);
     const errorMessage = error.message || String(error);
     
     // Provide user-friendly message for resource_exhausted errors
+    if (errorMessage.includes('resource_exhausted') || errorMessage.includes('ConnectError')) {
+      res.status(503).json({ 
+        error: 'Service temporarily unavailable. The AI service is experiencing high load. Please try again in a few moments. The system will automatically retry.',
+        retryable: true 
+      });
+    } else {
+      res.status(500).json({ error: errorMessage });
+    }
+  }
+});
+
+// Generate tests by specific type
+router.post('/generate-tests/:testType', async (req: Request, res: Response) => {
+  try {
+    const { project_id, coding_session_id } = req.body;
+    const testType = req.params.testType as TestType;
+
+    if (!project_id) {
+      return res.status(400).json({ error: 'project_id is required' });
+    }
+
+    const validTypes: TestType[] = ['unit', 'integration', 'e2e', 'contract', 'load'];
+    if (!validTypes.includes(testType)) {
+      return res.status(400).json({ error: `Invalid test type. Must be one of: ${validTypes.join(', ')}` });
+    }
+
+    const session = await qaService.generateTests(project_id, coding_session_id, testType);
+    res.json({ session, message: `${testType} test generation started` });
+  } catch (error: any) {
+    console.error('Error generating tests:', error);
+    const errorMessage = error.message || String(error);
+    
     if (errorMessage.includes('resource_exhausted') || errorMessage.includes('ConnectError')) {
       res.status(503).json({ 
         error: 'Service temporarily unavailable. The AI service is experiencing high load. Please try again in a few moments. The system will automatically retry.',
