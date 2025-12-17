@@ -1,8 +1,13 @@
 import apiClient from './client';
-import { QASession, CreateQASessionRequest, QADashboard, QAReport } from '@devflow-studio/shared';
+import { QASession, CreateQASessionRequest, QADashboard, QAReport, TestType } from '@devflow-studio/shared';
 
 export const qaApi = {
   create: async (data: CreateQASessionRequest): Promise<QASession> => {
+    const response = await apiClient.post('/qa/create', data);
+    return response.data;
+  },
+
+  createSession: async (data: CreateQASessionRequest): Promise<QASession> => {
     const response = await apiClient.post('/qa/create', data);
     return response.data;
   },
@@ -22,8 +27,17 @@ export const qaApi = {
     return response.data;
   },
 
-  generateTests: async (projectId: string, codingSessionId?: string) => {
+  generateTests: async (projectId: string, codingSessionId?: string, testType?: TestType) => {
     const response = await apiClient.post('/qa/generate-tests', {
+      project_id: projectId,
+      coding_session_id: codingSessionId,
+      test_type: testType,
+    });
+    return response.data;
+  },
+
+  generateTestsByType: async (projectId: string, testType: TestType, codingSessionId?: string) => {
+    const response = await apiClient.post(`/qa/generate-tests/${testType}`, {
       project_id: projectId,
       coding_session_id: codingSessionId,
     });

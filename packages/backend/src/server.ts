@@ -14,6 +14,7 @@ import codingSessionsRouter from './routes/coding-sessions';
 import qaRouter from './routes/qa';
 import testSuitesRouter from './routes/test-suites';
 import releasesRouter from './routes/releases';
+import integrationTestPlansRouter from './routes/integration-test-plans';
 import { validateProjectPath } from './middleware/validation';
 import { auditLog } from './middleware/audit';
 
@@ -40,6 +41,7 @@ app.use('/api/coding-sessions', codingSessionsRouter);
 app.use('/api/qa', qaRouter);
 app.use('/api/test-suites', testSuitesRouter);
 app.use('/api/releases', releasesRouter);
+app.use('/api/integration-test-plans', integrationTestPlansRouter);
 
 // Health check
 app.get('/health', (req, res) => {

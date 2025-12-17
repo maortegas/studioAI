@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import pool from '../config/database';
-import { QASession, TestResult, QASessionStatus, TestStatus } from '@devflow-studio/shared';
+import { QASession, TestResult, QASessionStatus, TestStatus, TestType } from '@devflow-studio/shared';
 
 export class QARepository {
   private pool: Pool;
@@ -12,12 +12,13 @@ export class QARepository {
   async create(data: {
     project_id: string;
     coding_session_id?: string;
+    test_type?: TestType;
   }): Promise<QASession> {
     const result = await this.pool.query(
-      `INSERT INTO qa_sessions (project_id, coding_session_id)
-       VALUES ($1, $2)
+      `INSERT INTO qa_sessions (project_id, coding_session_id, test_type)
+       VALUES ($1, $2, $3)
        RETURNING *`,
-      [data.project_id, data.coding_session_id]
+      [data.project_id, data.coding_session_id, data.test_type]
     );
     return result.rows[0];
   }
@@ -34,6 +35,14 @@ export class QARepository {
     const result = await this.pool.query(
       'SELECT * FROM qa_sessions WHERE project_id = $1 ORDER BY created_at DESC',
       [projectId]
+    );
+    return result.rows;
+  }
+
+  async findByProjectIdAndType(projectId: string, testType: TestType): Promise<QASession[]> {
+    const result = await this.pool.query(
+      'SELECT * FROM qa_sessions WHERE project_id = $1 AND test_type = $2 ORDER BY created_at DESC',
+      [projectId, testType]
     );
     return result.rows;
   }
@@ -86,6 +95,10 @@ export class QARepository {
     if (data.completed_at !== undefined) {
       fields.push(`completed_at = $${paramCount++}`);
       values.push(data.completed_at);
+    }
+    if (data.test_type !== undefined) {
+      fields.push(`test_type = $${paramCount++}`);
+      values.push(data.test_type);
     }
 
     values.push(id);
@@ -143,7 +156,35 @@ export class QARepository {
       [projectId]
     );
 
+    // Get stats segmented by test type
+    const statsByType = await this.pool.query(
+      `SELECT 
+        test_type,
+        COUNT(*) as total_sessions,
+        SUM(CASE WHEN status = 'completed' AND failed_tests = 0 THEN 1 ELSE 0 END) as passed_sessions,
+        SUM(CASE WHEN status = 'completed' AND failed_tests > 0 THEN 1 ELSE 0 END) as failed_sessions,
+        AVG(coverage_percentage) as avg_coverage
+       FROM qa_sessions
+       WHERE project_id = $1 AND test_type IS NOT NULL
+       GROUP BY test_type`,
+      [projectId]
+    );
+
     const lastSession = sessions.length > 0 ? sessions[0] : null;
+
+    // Build by_type object
+    const byType: any = {};
+    for (const row of statsByType.rows) {
+      const total = parseInt(row.total_sessions || '0');
+      const passed = parseInt(row.passed_sessions || '0');
+      byType[row.test_type] = {
+        total_sessions: total,
+        passed_sessions: passed,
+        failed_sessions: parseInt(row.failed_sessions || '0'),
+        average_coverage: row.avg_coverage ? parseFloat(row.avg_coverage) : undefined,
+        pass_rate: total > 0 ? Math.round((passed / total) * 100) : 0,
+      };
+    }
 
     return {
       project_id: projectId,
@@ -153,6 +194,7 @@ export class QARepository {
       average_coverage: stats.rows[0].avg_coverage ? parseFloat(stats.rows[0].avg_coverage) : undefined,
       last_session: lastSession,
       recent_sessions: sessions.slice(0, 10),
+      by_type: byType,
     };
   }
 }

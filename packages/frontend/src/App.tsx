@@ -9,22 +9,22 @@ import ProjectDetail from './pages/ProjectDetail';
 function App() {
   return (
     <ThemeProvider>
-      <ToastProvider>
+    <ToastProvider>
         <Router
           future={{
             v7_relativeSplatPath: true,
             v7_startTransition: true,
           }}
         >
-          <Layout>
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/projects" element={<ProjectList />} />
-              <Route path="/projects/:id" element={<ProjectDetail />} />
-            </Routes>
-          </Layout>
-        </Router>
-      </ToastProvider>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/projects" element={<ProjectList />} />
+            <Route path="/projects/:id" element={<ProjectDetail />} />
+          </Routes>
+        </Layout>
+      </Router>
+    </ToastProvider>
     </ThemeProvider>
   );
 }

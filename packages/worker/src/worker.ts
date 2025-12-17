@@ -509,9 +509,324 @@ async function processJob(jobId: string) {
       if (isQASession) {
         console.log(`[Worker] Processing QA session ${qaSessionId}, phase: ${job.args.phase || 'execution'}`);
         try {
-          const qaPhase = job.args.phase; // 'test_generation' or undefined (run tests)
+          const qaPhase = job.args.phase; // 'test_generation', 'integration_test_plan_generation', or undefined (run tests)
           
-          if (qaPhase === 'test_generation') {
+          // Handle test plan generation (for all test types)
+          if (qaPhase === 'test_plan_generation') {
+            const testType = job.args?.test_type || 'unit';
+            console.log(`[Worker] Processing ${testType} test plan generation for QA session ${qaSessionId}`);
+            console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+            
+            // Parse plan from AI output - try multiple patterns
+            let jsonMatch: RegExpMatchArray | null = null;
+            let jsonString = '';
+            
+            // Try pattern 1: ```json ... ``` (flexible whitespace, non-greedy to get first match)
+            jsonMatch = result.output.match(/```\s*json\s*([\s\S]*?)\s*```/i);
+            if (jsonMatch && jsonMatch[1]) {
+              jsonString = jsonMatch[1].trim();
+              console.log('[Worker] Found JSON using pattern 1 (json code block)');
+            }
+            
+            // Try pattern 1b: Look for JSON after "```json" even if there's text before it
+            if (!jsonString) {
+              const jsonBlockIndex = result.output.toLowerCase().indexOf('```json');
+              if (jsonBlockIndex !== -1) {
+                const afterJsonBlock = result.output.substring(jsonBlockIndex);
+                jsonMatch = afterJsonBlock.match(/```\s*json\s*([\s\S]*?)\s*```/i);
+                if (jsonMatch && jsonMatch[1]) {
+                  jsonString = jsonMatch[1].trim();
+                  console.log('[Worker] Found JSON using pattern 1b (json code block after text)');
+                }
+              }
+            }
+            
+            // Try pattern 2: ``` ... ``` (without json, but contains array)
+            if (!jsonString) {
+              jsonMatch = result.output.match(/```\s*([\s\S]*?)\s*```/);
+              if (jsonMatch && jsonMatch[1]) {
+                // Check if it looks like JSON array
+                const candidate = jsonMatch[1].trim();
+                if ((candidate.startsWith('[') || candidate.startsWith('{')) && candidate.includes('[')) {
+                  // Try to extract just the array part
+                  const arrayStart = candidate.indexOf('[');
+                  const arrayEnd = candidate.lastIndexOf(']');
+                  if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+                    const arrayCandidate = candidate.substring(arrayStart, arrayEnd + 1);
+                    try {
+                      const parsed = JSON.parse(arrayCandidate);
+                      if (Array.isArray(parsed)) {
+                        jsonString = arrayCandidate;
+                        console.log('[Worker] Found JSON using pattern 2 (code block with array)');
+                      }
+                    } catch {
+                      // Not valid, continue
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Try pattern 3: Find JSON array directly in text
+            if (!jsonString) {
+              jsonMatch = result.output.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+              if (jsonMatch && jsonMatch[0]) {
+                jsonString = jsonMatch[0].trim();
+              }
+            }
+            
+            // Try pattern 4: Find JSON by looking for [ and ]
+            if (!jsonString) {
+              const jsonStart = result.output.indexOf('[');
+              const jsonEnd = result.output.lastIndexOf(']');
+              if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+                const candidate = result.output.substring(jsonStart, jsonEnd + 1).trim();
+                // Validate it looks like JSON
+                if (candidate.startsWith('[') && candidate.endsWith(']')) {
+                  jsonString = candidate;
+                }
+              }
+            }
+            
+            // Try pattern 5: Look for JSON after common markers
+            if (!jsonString) {
+              const markers = ['Output:', 'Plan:', 'Tests:', 'JSON:', 'Result:', 'Test Plan:', 'Here is', 'Here\'s', 'created', 'generated'];
+              for (const marker of markers) {
+                const markerIndex = result.output.toLowerCase().indexOf(marker.toLowerCase());
+                if (markerIndex !== -1) {
+                  const afterMarker = result.output.substring(markerIndex + marker.length);
+                  const jsonStart = afterMarker.indexOf('[');
+                  const jsonEnd = afterMarker.lastIndexOf(']');
+                  if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+                    const candidate = afterMarker.substring(jsonStart, jsonEnd + 1).trim();
+                    if (candidate.startsWith('[') && candidate.endsWith(']')) {
+                      jsonString = candidate;
+                      console.log(`[Worker] Found JSON using pattern 5 (after marker: ${marker})`);
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Try pattern 5b: Look for JSON after file mentions (e.g., "I've created file.json with...")
+            if (!jsonString) {
+              const filePattern = /(?:created|generated|saved|wrote|made)\s+[^\s]+\.json[^[]*\[/i;
+              const fileMatch = result.output.match(filePattern);
+              if (fileMatch) {
+                const afterFileMention = result.output.substring(fileMatch.index! + fileMatch[0].length - 1);
+                const jsonEnd = afterFileMention.lastIndexOf(']');
+                if (jsonEnd !== -1) {
+                  const candidate = '[' + afterFileMention.substring(0, jsonEnd + 1);
+                  try {
+                    const parsed = JSON.parse(candidate);
+                    if (Array.isArray(parsed)) {
+                      jsonString = candidate;
+                      console.log('[Worker] Found JSON using pattern 5b (after file mention)');
+                    }
+                  } catch {
+                    // Not valid JSON, continue
+                  }
+                }
+              }
+            }
+            
+            // Try pattern 6: Extract JSON from lines that look like JSON (more aggressive)
+            if (!jsonString) {
+              const lines = result.output.split('\n');
+              let jsonLines: string[] = [];
+              let inJsonBlock = false;
+              let braceCount = 0;
+              let bracketCount = 0;
+              
+              for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmed = line.trim();
+                
+                // Count brackets and braces to track JSON structure
+                const openBrackets = (line.match(/\[/g) || []).length;
+                const closeBrackets = (line.match(/\]/g) || []).length;
+                const openBraces = (line.match(/\{/g) || []).length;
+                const closeBraces = (line.match(/\}/g) || []).length;
+                
+                // Start of JSON array
+                if (!inJsonBlock && (trimmed.startsWith('[') || (openBrackets > 0 && trimmed.match(/^\s*\[/)))) {
+                  inJsonBlock = true;
+                  jsonLines = [line];
+                  bracketCount = openBrackets - closeBrackets;
+                  braceCount = openBraces - closeBraces;
+                } else if (inJsonBlock) {
+                  jsonLines.push(line);
+                  bracketCount += openBrackets - closeBrackets;
+                  braceCount += openBraces - closeBraces;
+                  
+                  // End of JSON array (balanced brackets and braces)
+                  if (bracketCount === 0 && braceCount === 0 && (trimmed.endsWith(']') || closeBrackets > 0)) {
+                    const candidate = jsonLines.join('\n').trim();
+                    // Clean up: remove any trailing text after ]
+                    const cleanCandidate = candidate.replace(/\]\s*[^\]]*$/, ']');
+                    if (cleanCandidate.startsWith('[') && cleanCandidate.endsWith(']')) {
+                      try {
+                        // Validate it's valid JSON
+                        const parsed = JSON.parse(cleanCandidate);
+                        if (Array.isArray(parsed)) {
+                          jsonString = cleanCandidate;
+                          break;
+                        }
+                      } catch {
+                        // Not valid JSON, continue searching
+                        inJsonBlock = false;
+                        jsonLines = [];
+                        bracketCount = 0;
+                        braceCount = 0;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            if (!jsonString) {
+              // Log the full output for debugging
+              console.error(`[Worker] ========== FULL OUTPUT START ==========`);
+              console.error(result.output);
+              console.error(`[Worker] ========== FULL OUTPUT END ==========`);
+              console.error(`[Worker] Output length: ${result.output?.length || 0} characters`);
+              
+              // Try one more pattern: look for any valid JSON array anywhere (character-by-character)
+              try {
+                const output = result.output || '';
+                let bestCandidate: { json: string; length: number } | null = null;
+                
+                // Find all potential JSON arrays
+                for (let start = 0; start < output.length; start++) {
+                  if (output[start] === '[') {
+                    // Try to find matching closing bracket with proper nesting
+                    let bracketDepth = 0;
+                    let braceDepth = 0;
+                    let inString = false;
+                    let escapeNext = false;
+                    let end = -1;
+                    
+                    for (let i = start; i < output.length; i++) {
+                      const char = output[i];
+                      
+                      if (escapeNext) {
+                        escapeNext = false;
+                        continue;
+                      }
+                      
+                      if (char === '\\') {
+                        escapeNext = true;
+                        continue;
+                      }
+                      
+                      if (char === '"' && !escapeNext) {
+                        inString = !inString;
+                        continue;
+                      }
+                      
+                      if (!inString) {
+                        if (char === '[') bracketDepth++;
+                        if (char === ']') bracketDepth--;
+                        if (char === '{') braceDepth++;
+                        if (char === '}') braceDepth--;
+                        
+                        if (bracketDepth === 0 && braceDepth === 0 && i > start) {
+                          end = i;
+                          break;
+                        }
+                      }
+                    }
+                    
+                    if (end > start) {
+                      const candidate = output.substring(start, end + 1);
+                      try {
+                        const parsed = JSON.parse(candidate);
+                        if (Array.isArray(parsed)) {
+                          // Prefer longer arrays (more complete)
+                          if (!bestCandidate || parsed.length > bestCandidate.length) {
+                            bestCandidate = { json: candidate, length: parsed.length };
+                          }
+                        }
+                      } catch {
+                        // Not valid JSON, continue
+                      }
+                    }
+                  }
+                }
+                
+                if (bestCandidate) {
+                  jsonString = bestCandidate.json;
+                  console.log(`[Worker] Found JSON array using fallback pattern (${bestCandidate.length} items)`);
+                }
+              } catch (e) {
+                console.error(`[Worker] Fallback pattern search failed:`, e);
+              }
+              
+              if (!jsonString) {
+                throw new Error('No JSON array found in test plan output');
+              }
+            }
+
+            let planItems;
+            try {
+              planItems = JSON.parse(jsonString);
+            } catch (parseError: any) {
+              console.error(`[Worker] JSON parse error: ${parseError.message}`);
+              console.error(`[Worker] JSON string (first 500 chars): ${jsonString.substring(0, 500)}`);
+              console.error(`[Worker] JSON string (last 500 chars): ${jsonString.substring(Math.max(0, jsonString.length - 500))}`);
+              throw new Error(`Failed to parse JSON: ${parseError.message}`);
+            }
+            
+            if (!Array.isArray(planItems)) {
+              console.error(`[Worker] Parsed result is not an array. Type: ${typeof planItems}, Value: ${JSON.stringify(planItems).substring(0, 200)}`);
+              throw new Error('Test plan must be a JSON array');
+            }
+            
+            if (planItems.length === 0) {
+              console.warn(`[Worker] Parsed plan has 0 items. This might be expected, but usually plans should have items.`);
+            } else {
+              console.log(`[Worker] Successfully parsed ${planItems.length} test plan items`);
+            }
+
+            // Find or create the plan
+            const planResult = await pool.query(
+              'SELECT id FROM test_plans WHERE qa_session_id = $1 AND test_type = $2 ORDER BY created_at DESC LIMIT 1',
+              [qaSessionId, testType]
+            );
+
+            if (planResult.rows.length > 0) {
+              // Update existing plan
+              await pool.query(
+                'UPDATE test_plans SET items = $1, status = $2 WHERE id = $3',
+                [JSON.stringify(planItems), 'draft', planResult.rows[0].id]
+              );
+              console.log(`[Worker] Updated ${testType} test plan with ${planItems.length} items`);
+            } else {
+              // Create new plan if not found
+              const sessionResult = await pool.query(
+                'SELECT project_id, coding_session_id FROM qa_sessions WHERE id = $1',
+                [qaSessionId]
+              );
+              
+              if (sessionResult.rows.length > 0) {
+                const session = sessionResult.rows[0];
+                await pool.query(
+                  `INSERT INTO test_plans (project_id, qa_session_id, coding_session_id, test_type, items, status)
+                   VALUES ($1, $2, $3, $4, $5, $6)`,
+                  [session.project_id, qaSessionId, session.coding_session_id, testType, JSON.stringify(planItems), 'draft']
+                );
+                console.log(`[Worker] Created ${testType} test plan with ${planItems.length} items`);
+              }
+            }
+
+            // Update QA session status to pending (waiting for user approval)
+            await pool.query(
+              'UPDATE qa_sessions SET status = $1, completed_at = $2 WHERE id = $3',
+              ['pending', new Date(), qaSessionId]
+            );
+          } else if (qaPhase === 'test_generation') {
             console.log(`[Worker] Processing test generation for QA session ${qaSessionId}`);
             const storyId = job.args.story_id;
             const storyIndex = job.args.story_index || 0;
@@ -585,26 +900,228 @@ async function processJob(jobId: string) {
             }
           } else {
             // This is full QA execution - parse and save results
-            const jsonMatch = result.output.match(/```json\s*([\s\S]*?)\s*```/) || 
-                             result.output.match(/\{[\s\S]*\}/);
+            console.log(`[Worker] Processing QA execution results for session ${qaSessionId}`);
+            console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
             
-            if (!jsonMatch) {
+            // Parse JSON from AI output - try multiple patterns (same as test plan generation)
+            let jsonMatch: RegExpMatchArray | null = null;
+            let jsonString = '';
+            
+            // Try pattern 1: ```json ... ```
+            jsonMatch = result.output.match(/```\s*json\s*([\s\S]*?)\s*```/i);
+            if (jsonMatch && jsonMatch[1]) {
+              jsonString = jsonMatch[1].trim();
+              console.log('[Worker] Found JSON using pattern 1 (json code block)');
+            }
+            
+            // Try pattern 1b: Look for JSON after "```json" even if there's text before it
+            if (!jsonString) {
+              const jsonBlockIndex = result.output.toLowerCase().indexOf('```json');
+              if (jsonBlockIndex !== -1) {
+                const afterJsonBlock = result.output.substring(jsonBlockIndex);
+                jsonMatch = afterJsonBlock.match(/```\s*json\s*([\s\S]*?)\s*```/i);
+                if (jsonMatch && jsonMatch[1]) {
+                  jsonString = jsonMatch[1].trim();
+                  console.log('[Worker] Found JSON using pattern 1b (json code block after text)');
+                }
+              }
+            }
+            
+            // Try pattern 2: ``` ... ``` (without json, but contains object)
+            if (!jsonString) {
+              jsonMatch = result.output.match(/```\s*([\s\S]*?)\s*```/);
+              if (jsonMatch && jsonMatch[1]) {
+                const candidate = jsonMatch[1].trim();
+                if (candidate.startsWith('{') || candidate.startsWith('[')) {
+                  try {
+                    const parsed = JSON.parse(candidate);
+                    if (typeof parsed === 'object') {
+                      jsonString = candidate;
+                      console.log('[Worker] Found JSON using pattern 2 (code block with object)');
+                    }
+                  } catch {
+                    // Not valid JSON, continue
+                  }
+                }
+              }
+            }
+            
+            // Try pattern 3: Find JSON object directly in text
+            if (!jsonString) {
+              jsonMatch = result.output.match(/\{\s*"summary"[\s\S]*?\}/);
+              if (jsonMatch && jsonMatch[0]) {
+                jsonString = jsonMatch[0].trim();
+                console.log('[Worker] Found JSON using pattern 3 (direct object match)');
+              }
+            }
+            
+            // Try pattern 4: Find JSON by looking for { and }
+            if (!jsonString) {
+              const jsonStart = result.output.indexOf('{');
+              const jsonEnd = result.output.lastIndexOf('}');
+              if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+                const candidate = result.output.substring(jsonStart, jsonEnd + 1).trim();
+                if (candidate.startsWith('{') && candidate.endsWith('}')) {
+                  try {
+                    const parsed = JSON.parse(candidate);
+                    if (typeof parsed === 'object' && parsed.summary) {
+                      jsonString = candidate;
+                      console.log('[Worker] Found JSON using pattern 4 (bracket matching)');
+                    }
+                  } catch {
+                    // Not valid JSON, continue
+                  }
+                }
+              }
+            }
+            
+            // Try pattern 5: Look for JSON after common markers
+            if (!jsonString) {
+              const markers = ['Output:', 'Results:', 'Summary:', 'JSON:', 'Result:', 'Test Results:', 'Here is', 'Here\'s'];
+              for (const marker of markers) {
+                const markerIndex = result.output.toLowerCase().indexOf(marker.toLowerCase());
+                if (markerIndex !== -1) {
+                  const afterMarker = result.output.substring(markerIndex + marker.length);
+                  const jsonStart = afterMarker.indexOf('{');
+                  const jsonEnd = afterMarker.lastIndexOf('}');
+                  if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+                    const candidate = afterMarker.substring(jsonStart, jsonEnd + 1).trim();
+                    if (candidate.startsWith('{') && candidate.endsWith('}')) {
+                      try {
+                        const parsed = JSON.parse(candidate);
+                        if (typeof parsed === 'object' && parsed.summary) {
+                          jsonString = candidate;
+                          console.log(`[Worker] Found JSON using pattern 5 (after marker: ${marker})`);
+                          break;
+                        }
+                      } catch {
+                        // Not valid JSON, continue
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Try pattern 6: Character-by-character search for valid JSON object
+            if (!jsonString) {
+              try {
+                const output = result.output || '';
+                let bestCandidate: { json: string; hasSummary: boolean } | null = null;
+                
+                for (let start = 0; start < output.length; start++) {
+                  if (output[start] === '{') {
+                    let braceDepth = 0;
+                    let bracketDepth = 0;
+                    let inString = false;
+                    let escapeNext = false;
+                    let end = -1;
+                    
+                    for (let i = start; i < output.length; i++) {
+                      const char = output[i];
+                      
+                      if (escapeNext) {
+                        escapeNext = false;
+                        continue;
+                      }
+                      
+                      if (char === '\\') {
+                        escapeNext = true;
+                        continue;
+                      }
+                      
+                      if (char === '"' && !escapeNext) {
+                        inString = !inString;
+                        continue;
+                      }
+                      
+                      if (!inString) {
+                        if (char === '{') braceDepth++;
+                        if (char === '}') braceDepth--;
+                        if (char === '[') bracketDepth++;
+                        if (char === ']') bracketDepth--;
+                        
+                        if (braceDepth === 0 && bracketDepth === 0 && i > start) {
+                          end = i;
+                          break;
+                        }
+                      }
+                    }
+                    
+                    if (end > start) {
+                      const candidate = output.substring(start, end + 1);
+                      try {
+                        const parsed = JSON.parse(candidate);
+                        if (typeof parsed === 'object' && parsed.summary) {
+                          // Prefer objects with summary field
+                          if (!bestCandidate || !bestCandidate.hasSummary) {
+                            bestCandidate = { json: candidate, hasSummary: true };
+                          }
+                        } else if (typeof parsed === 'object') {
+                          // Fallback to any valid object
+                          if (!bestCandidate) {
+                            bestCandidate = { json: candidate, hasSummary: false };
+                          }
+                        }
+                      } catch {
+                        // Not valid JSON, continue
+                      }
+                    }
+                  }
+                }
+                
+                if (bestCandidate) {
+                  jsonString = bestCandidate.json;
+                  console.log(`[Worker] Found JSON using pattern 6 (character-by-character, hasSummary: ${bestCandidate.hasSummary})`);
+                }
+              } catch (e) {
+                console.error(`[Worker] Pattern 6 search failed:`, e);
+              }
+            }
+            
+            if (!jsonString) {
+              // Log the full output for debugging
+              console.error(`[Worker] ========== FULL QA OUTPUT START ==========`);
+              console.error(result.output);
+              console.error(`[Worker] ========== FULL QA OUTPUT END ==========`);
+              console.error(`[Worker] Output length: ${result.output?.length || 0} characters`);
               throw new Error('No JSON found in QA output');
             }
 
-            const qaData = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+            let qaData;
+            try {
+              qaData = JSON.parse(jsonString);
+            } catch (parseError: any) {
+              console.error(`[Worker] JSON parse error: ${parseError.message}`);
+              console.error(`[Worker] JSON string (first 500 chars): ${jsonString.substring(0, 500)}`);
+              console.error(`[Worker] JSON string (last 500 chars): ${jsonString.substring(Math.max(0, jsonString.length - 500))}`);
+              throw new Error(`Failed to parse JSON: ${parseError.message}`);
+            }
+            
+            if (!qaData || typeof qaData !== 'object') {
+              console.error(`[Worker] Parsed result is not an object. Type: ${typeof qaData}, Value: ${JSON.stringify(qaData).substring(0, 200)}`);
+              throw new Error('QA results must be a JSON object with summary and tests');
+            }
             const summary = qaData.summary || {};
             const tests = qaData.tests || [];
 
+            // Get test_type from job args or session, default to test.type or 'unit'
+            const jobTestType = job.args?.test_type;
+            const sessionResult = await pool.query('SELECT test_type FROM qa_sessions WHERE id = $1', [qaSessionId]);
+            const sessionTestType = sessionResult.rows[0]?.test_type;
+
             // Save test results
             for (const test of tests) {
+              // Use test_type from job args, session, test.type, or default to 'unit'
+              const testType = jobTestType || sessionTestType || test.type || 'unit';
+              
               await pool.query(
                 `INSERT INTO test_results (session_id, test_name, test_type, status, duration, error_message, output)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                 [
                   qaSessionId,
                   test.name || 'Unknown test',
-                  test.type || 'unit',
+                  testType,
                   test.status || 'skipped',
                   test.duration,
                   test.error,
@@ -1252,8 +1769,8 @@ async function pollJobs() {
         console.log(`[Worker] Counter desync detected (${activeJobs} active but 0 tracked), resetting...`);
         activeJobs = 0;
       } else {
-        setTimeout(pollJobs, 5000); // Wait longer when at capacity
-        return;
+      setTimeout(pollJobs, 5000); // Wait longer when at capacity
+      return;
       }
     }
 
@@ -1477,6 +1994,6 @@ async function syncActiveJobs() {
 console.log('AI Worker started');
 syncActiveJobs().then(() => {
   console.log('[Worker] Active jobs synchronized, starting job polling...');
-  pollJobs();
+pollJobs();
 });
 
