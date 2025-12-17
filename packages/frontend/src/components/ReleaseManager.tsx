@@ -137,7 +137,7 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
   if (loading) {
     return (
       <div className="flex justify-center items-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 dark:border-blue-400"></div>
       </div>
     );
   }
@@ -146,20 +146,20 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
     <div className="space-y-6">
       {/* Summary */}
       {summary && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-bold mb-4">Release Summary</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-6">
+          <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">Release Summary</h2>
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <div className="text-sm text-gray-600">Total Releases</div>
-              <div className="text-2xl font-bold">{summary.total_releases}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Total Releases</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">{summary.total_releases}</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Published</div>
-              <div className="text-2xl font-bold">{summary.published_releases}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Published</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">{summary.published_releases}</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Latest Version</div>
-              <div className="text-2xl font-bold">{summary.latest_version || 'N/A'}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Latest Version</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">{summary.latest_version || 'N/A'}</div>
             </div>
           </div>
         </div>
@@ -167,10 +167,10 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
 
       {/* Actions */}
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Releases</h2>
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Releases</h2>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          className="bg-blue-600 dark:bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-700 dark:hover:bg-blue-600"
         >
           {showCreateForm ? 'Cancel' : 'Create Release'}
         </button>
@@ -178,11 +178,11 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
 
       {/* Create Form */}
       {showCreateForm && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-bold mb-4">Create New Release</h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-6">
+          <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">Create New Release</h3>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Version <span className="text-red-500">*</span>
               </label>
               <input
@@ -190,57 +190,57 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
                 value={formData.version}
                 onChange={(e) => setFormData({ ...formData, version: e.target.value })}
                 placeholder="e.g., 1.0.0"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Title</label>
               <input
                 type="text"
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 placeholder="Release title"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
               <textarea
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="Release description"
                 rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Release Notes</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Release Notes</label>
               <textarea
                 value={formData.release_notes}
                 onChange={(e) => setFormData({ ...formData, release_notes: e.target.value })}
                 placeholder="Release notes (markdown supported)"
                 rows={5}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Git Tag</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Git Tag</label>
                 <input
                   type="text"
                   value={formData.git_tag}
                   onChange={(e) => setFormData({ ...formData, git_tag: e.target.value })}
                   placeholder="e.g., v1.0.0"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Release Date</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Release Date</label>
                 <input
                   type="date"
                   value={formData.release_date}
                   onChange={(e) => setFormData({ ...formData, release_date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                 />
               </div>
             </div>
@@ -250,13 +250,13 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
                   setShowCreateForm(false);
                   resetForm();
                 }}
-                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateRelease}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                className="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:bg-blue-700 dark:hover:bg-blue-600"
               >
                 Create Release
               </button>
@@ -266,30 +266,30 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
       )}
 
       {/* Releases List */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 overflow-hidden">
         {releases.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
+          <div className="p-8 text-center text-gray-500 dark:text-gray-400">
             No releases yet. Create your first release to get started.
           </div>
         ) : (
-          <div className="divide-y divide-gray-200">
+          <div className="divide-y divide-gray-200 dark:divide-gray-700">
             {releases.map((release) => (
-              <div key={release.id} className="p-6 hover:bg-gray-50">
+              <div key={release.id} className="p-6 hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center space-x-3 mb-2">
-                      <h3 className="text-lg font-semibold">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                         {release.title || `Release ${release.version}`}
                       </h3>
                       <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(release.status)}`}>
                         {release.status}
                       </span>
-                      <span className="text-sm text-gray-500">v{release.version}</span>
+                      <span className="text-sm text-gray-500 dark:text-gray-400">v{release.version}</span>
                     </div>
                     {release.description && (
-                      <p className="text-gray-600 mb-2">{release.description}</p>
+                      <p className="text-gray-600 dark:text-gray-300 mb-2">{release.description}</p>
                     )}
-                    <div className="flex items-center space-x-4 text-sm text-gray-500">
+                    <div className="flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
                       {release.release_date && (
                         <span>Released: {new Date(release.release_date).toLocaleDateString()}</span>
                       )}
@@ -347,9 +347,9 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
                   </div>
                 </div>
                 {release.release_notes && (
-                  <div className="mt-4 p-4 bg-gray-50 rounded">
-                    <h4 className="font-medium mb-2">Release Notes</h4>
-                    <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                  <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded">
+                    <h4 className="font-medium mb-2 text-gray-900 dark:text-white">Release Notes</h4>
+                    <div className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
                       {release.release_notes}
                     </div>
                   </div>

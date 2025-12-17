@@ -41,20 +41,20 @@ export default function PRDEditor({ projectId }: PRDEditorProps) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow">
-      <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-        <h2 className="text-xl font-semibold">Product Requirements Document (PRD)</h2>
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+      <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Product Requirements Document (PRD)</h2>
         <div className="space-x-2">
           <button
             onClick={() => setPreview(!preview)}
-            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+            className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
           >
             {preview ? 'Edit' : 'Preview'}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
@@ -63,14 +63,14 @@ export default function PRDEditor({ projectId }: PRDEditorProps) {
 
       <div className="p-6">
         {preview ? (
-          <div className="prose max-w-none">
+          <div className="prose dark:prose-invert max-w-none prose-headings:text-gray-900 dark:prose-headings:text-white prose-p:text-gray-700 dark:prose-p:text-gray-300">
             <ReactMarkdown>{content}</ReactMarkdown>
           </div>
         ) : (
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            className="w-full h-96 p-4 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full h-96 p-4 border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
             placeholder="# Product Requirements Document (PRD)
 
 ## Problem Statement

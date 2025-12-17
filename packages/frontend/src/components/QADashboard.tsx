@@ -157,13 +157,13 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300';
       case 'running':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300';
       case 'failed':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300';
       default:
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300';
     }
   };
 
@@ -185,26 +185,26 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   const getTestTypeColor = (type: string) => {
     switch (type) {
       case 'unit':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300';
       case 'integration':
-        return 'bg-purple-100 text-purple-800';
+        return 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300';
       case 'e2e':
-        return 'bg-pink-100 text-pink-800';
+        return 'bg-pink-100 dark:bg-pink-900/30 text-pink-800 dark:text-pink-300';
       case 'performance':
-        return 'bg-orange-100 text-orange-800';
+        return 'bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300';
       case 'security':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300';
     }
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading QA dashboard...</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Loading QA dashboard...</div>;
   }
 
   if (!dashboard) {
-    return <div className="text-center py-8">No QA data available</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">No QA data available</div>;
   }
 
   const passRate = dashboard.total_sessions > 0
@@ -214,10 +214,10 @@ export default function QADashboard({ projectId }: QADashboardProps) {
   return (
     <div className="space-y-6">
       {/* Manual Actions */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="border-b border-gray-200 px-6 py-4">
-          <h2 className="text-xl font-semibold">QA Actions</h2>
-          <p className="text-sm text-gray-500 mt-1">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+        <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">QA Actions</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Generate tests or run QA manually (QA also runs automatically after coding sessions)
           </p>
         </div>
@@ -226,14 +226,14 @@ export default function QADashboard({ projectId }: QADashboardProps) {
             <button
               onClick={handleGenerateTests}
               disabled={generatingTests}
-              className="flex items-center space-x-2 px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center space-x-2 px-6 py-3 bg-yellow-600 dark:bg-yellow-500 text-white rounded-lg hover:bg-yellow-700 dark:hover:bg-yellow-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <span>{generatingTests ? 'Generating Tests...' : 'Generate Tests'}</span>
             </button>
-            <div className="text-sm text-gray-500 flex items-center">
+            <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center">
               <span>💡 Tests are automatically generated during coding sessions</span>
             </div>
           </div>
@@ -242,33 +242,33 @@ export default function QADashboard({ projectId }: QADashboardProps) {
 
       {/* Statistics */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-4 border-t-4 border-blue-500">
-          <div className="text-2xl font-bold text-gray-900">{dashboard.total_sessions}</div>
-          <div className="text-sm text-gray-600">Total Sessions</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-blue-500">
+          <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.total_sessions}</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Total Sessions</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 border-t-4 border-green-500">
-          <div className="text-2xl font-bold text-gray-900">{dashboard.passed_sessions}</div>
-          <div className="text-sm text-gray-600">Passed</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-green-500">
+          <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.passed_sessions}</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Passed</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 border-t-4 border-red-500">
-          <div className="text-2xl font-bold text-gray-900">{dashboard.failed_sessions}</div>
-          <div className="text-sm text-gray-600">Failed</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-red-500">
+          <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.failed_sessions}</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Failed</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 border-t-4 border-purple-500">
-          <div className="text-2xl font-bold text-gray-900">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-purple-500">
+          <div className="text-2xl font-bold text-gray-900 dark:text-white">
             {dashboard.average_coverage ? `${Math.round(dashboard.average_coverage)}%` : 'N/A'}
           </div>
-          <div className="text-sm text-gray-600">Avg Coverage</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">Avg Coverage</div>
         </div>
       </div>
 
       {/* Pass Rate */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-6">
         <div className="flex justify-between items-center mb-2">
-          <h3 className="text-lg font-semibold">Overall Pass Rate</h3>
-          <span className="text-2xl font-bold text-gray-900">{passRate}%</span>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Overall Pass Rate</h3>
+          <span className="text-2xl font-bold text-gray-900 dark:text-white">{passRate}%</span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-4">
+        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4">
           <div
             className={`h-4 rounded-full transition-all duration-500 ${
               passRate >= 80 ? 'bg-green-500' : passRate >= 50 ? 'bg-yellow-500' : 'bg-red-500'
@@ -280,9 +280,9 @@ export default function QADashboard({ projectId }: QADashboardProps) {
 
       {/* Recent Sessions */}
       {dashboard.recent_sessions.length > 0 && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="border-b border-gray-200 px-6 py-4">
-            <h2 className="text-xl font-semibold">Recent QA Sessions</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Recent QA Sessions</h2>
           </div>
           <div className="p-6">
             <div className="space-y-3">
@@ -294,7 +294,7 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                 return (
                   <div
                     key={session.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition cursor-pointer"
+                    className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md dark:hover:shadow-gray-700/50 transition cursor-pointer bg-white dark:bg-gray-800"
                     onClick={() => handleViewSession(session.id)}
                   >
                     <div className="flex justify-between items-start">
@@ -305,7 +305,7 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                               {session.status}
                             </span>
                             {session.coding_session_id && (
-                              <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded-full">
+                              <span className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
                                 Auto-triggered
                               </span>
                             )}
@@ -314,7 +314,7 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                             <button
                               onClick={() => handleRunQA(session.id)}
                               disabled={runningQA === session.id}
-                              className="px-3 py-1 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+                              className="px-3 py-1 text-xs bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition disabled:opacity-50"
                             >
                               {runningQA === session.id ? 'Starting...' : 'Run QA'}
                             </button>
@@ -322,41 +322,41 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                         </div>
                         <div className="grid grid-cols-4 gap-4 text-sm">
                           <div>
-                            <span className="text-gray-500">Total:</span>
-                            <span className="ml-2 font-semibold">{session.total_tests}</span>
+                            <span className="text-gray-500 dark:text-gray-400">Total:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">{session.total_tests}</span>
                           </div>
                           <div>
-                            <span className="text-green-600">Passed:</span>
-                            <span className="ml-2 font-semibold">{session.passed_tests}</span>
+                            <span className="text-green-600 dark:text-green-400">Passed:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">{session.passed_tests}</span>
                           </div>
                           <div>
-                            <span className="text-red-600">Failed:</span>
-                            <span className="ml-2 font-semibold">{session.failed_tests}</span>
+                            <span className="text-red-600 dark:text-red-400">Failed:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">{session.failed_tests}</span>
                           </div>
                           <div>
-                            <span className="text-gray-500">Skipped:</span>
-                            <span className="ml-2 font-semibold">{session.skipped_tests}</span>
+                            <span className="text-gray-500 dark:text-gray-400">Skipped:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">{session.skipped_tests}</span>
                           </div>
                         </div>
                         {session.coverage_percentage && (
                           <div className="mt-2 text-sm">
-                            <span className="text-gray-500">Coverage:</span>
-                            <span className="ml-2 font-semibold">{Math.round(session.coverage_percentage)}%</span>
+                            <span className="text-gray-500 dark:text-gray-400">Coverage:</span>
+                            <span className="ml-2 font-semibold text-gray-900 dark:text-white">{Math.round(session.coverage_percentage)}%</span>
                           </div>
                         )}
                       </div>
                       <div className="text-right ml-4">
-                        <div className="text-2xl font-bold text-gray-900">{successRate}%</div>
-                        <div className="text-xs text-gray-500">pass rate</div>
+                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{successRate}%</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">pass rate</div>
                         {session.completed_at && (
-                          <div className="text-xs text-gray-400 mt-1">
+                          <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                             {new Date(session.completed_at).toLocaleString()}
                           </div>
                         )}
                       </div>
                     </div>
                     <div className="mt-3">
-                      <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                         <div
                           className={`h-2 rounded-full transition-all ${
                             successRate >= 80 ? 'bg-green-500' : successRate >= 50 ? 'bg-yellow-500' : 'bg-red-500'
@@ -375,13 +375,13 @@ export default function QADashboard({ projectId }: QADashboardProps) {
 
       {/* Session Detail Modal */}
       {selectedSession && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-            <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 bg-white">
-              <h2 className="text-xl font-semibold">QA Session Details</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center sticky top-0 bg-white dark:bg-gray-800">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">QA Session Details</h2>
               <button
                 onClick={() => setSelectedSession(null)}
-                className="text-gray-400 hover:text-gray-600 transition"
+                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -403,19 +403,19 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                     </button>
                   </div>
                   {loadingTestFiles ? (
-                    <div className="text-center py-4">Loading test files...</div>
+                    <div className="text-center py-4 text-gray-900 dark:text-white">Loading test files...</div>
                   ) : testFiles.length === 0 ? (
-                    <div className="text-center py-4 text-gray-500">No test files found</div>
+                    <div className="text-center py-4 text-gray-500 dark:text-gray-400">No test files found</div>
                   ) : (
                     <div className="space-y-2">
                       {testFiles.map((file) => (
                         <div
                           key={file.name}
-                          className="flex items-center justify-between border border-gray-200 rounded-lg p-3 hover:bg-gray-50"
+                          className="flex items-center justify-between border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 bg-white dark:bg-gray-800"
                         >
                           <div className="flex-1">
-                            <div className="font-medium text-gray-900">{file.name}</div>
-                            <div className="text-sm text-gray-500">
+                            <div className="font-medium text-gray-900 dark:text-white">{file.name}</div>
+                            <div className="text-sm text-gray-500 dark:text-gray-400">
                               {(file.size / 1024).toFixed(2)} KB
                             </div>
                           </div>
@@ -425,7 +425,7 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                                 e.stopPropagation();
                                 selectedSession && handleEditTest(selectedSession.id, file.name);
                               }}
-                              className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                              className="px-3 py-1 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition"
                             >
                               Edit
                             </button>
@@ -435,7 +435,7 @@ export default function QADashboard({ projectId }: QADashboardProps) {
                                   e.stopPropagation();
                                   selectedSession && handleDeleteTest(selectedSession.id, file.name);
                                 }}
-                                className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                                className="px-3 py-1 text-sm bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition"
                               >
                                 Delete
                               </button>
@@ -450,21 +450,21 @@ export default function QADashboard({ projectId }: QADashboardProps) {
 
               {/* Summary */}
               <div className="grid grid-cols-5 gap-4 mb-6">
-                <div className="bg-blue-50 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-blue-900">{selectedSession.summary.total}</div>
-                  <div className="text-sm text-blue-700">Total Tests</div>
+                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-blue-900 dark:text-blue-300">{selectedSession.summary.total}</div>
+                  <div className="text-sm text-blue-700 dark:text-blue-400">Total Tests</div>
                 </div>
-                <div className="bg-green-50 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-green-900">{selectedSession.summary.passed}</div>
-                  <div className="text-sm text-green-700">Passed</div>
+                <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-green-900 dark:text-green-300">{selectedSession.summary.passed}</div>
+                  <div className="text-sm text-green-700 dark:text-green-400">Passed</div>
                 </div>
-                <div className="bg-red-50 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-red-900">{selectedSession.summary.failed}</div>
-                  <div className="text-sm text-red-700">Failed</div>
+                <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-red-900 dark:text-red-300">{selectedSession.summary.failed}</div>
+                  <div className="text-sm text-red-700 dark:text-red-400">Failed</div>
                 </div>
-                <div className="bg-yellow-50 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-yellow-900">{selectedSession.summary.skipped}</div>
-                  <div className="text-sm text-yellow-700">Skipped</div>
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-yellow-900 dark:text-yellow-300">{selectedSession.summary.skipped}</div>
+                  <div className="text-sm text-yellow-700 dark:text-yellow-400">Skipped</div>
                 </div>
                 {selectedSession.summary.coverage && (
                   <div className="bg-purple-50 rounded-lg p-4 text-center">

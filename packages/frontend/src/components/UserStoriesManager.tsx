@@ -174,26 +174,26 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading user stories...</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Loading user stories...</div>;
   }
 
   return (
     <div className="space-y-6">
       {/* Header with Actions */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-semibold">User Stories</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+        <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">User Stories</h2>
           <div className="flex space-x-2">
             <button
               onClick={() => setShowCreateForm(!showCreateForm)}
-              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
             >
               {showCreateForm ? 'Cancel' : 'Create Manually'}
             </button>
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
+              className="px-4 py-2 text-sm bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
             >
               {generating ? 'Generating...' : 'Generate with AI'}
             </button>
@@ -202,9 +202,9 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
 
         {/* Generate Form */}
         {!showCreateForm && (
-          <div className="p-6 border-b border-gray-200 bg-gray-50">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
             <div className="flex items-center space-x-4">
-              <label className="text-sm font-medium text-gray-700">
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
                 Number of stories to generate:
               </label>
               <input
@@ -213,7 +213,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
                 max="50"
                 value={storiesCount}
                 onChange={(e) => setStoriesCount(parseInt(e.target.value) || 10)}
-                className="w-20 px-3 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                className="w-20 px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400"
               />
             </div>
           </div>
@@ -221,7 +221,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
 
         {/* Create Form */}
         {showCreateForm && (
-          <div className="p-6 border-b border-gray-200">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <CreateUserStoryForm
               projectId={projectId}
               onSuccess={async () => {
@@ -236,36 +236,36 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
 
         {/* Generated Stories for Review */}
         {generatedStoriesForReview.length > 0 && (
-          <div className="p-6 border-b border-gray-200 bg-blue-50">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="font-medium text-lg">
+              <h3 className="font-medium text-lg text-gray-900 dark:text-white">
                 Review Generated Stories ({generatedStoriesForReview.length})
               </h3>
               <button
                 onClick={handleSaveAllGeneratedStories}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                className="px-4 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600"
               >
                 Save All
               </button>
             </div>
             <div className="space-y-3">
               {generatedStoriesForReview.map((storyData, index) => (
-                <div key={index} className="bg-white border border-blue-200 rounded-lg p-4">
+                <div key={index} className="bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
                   <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-medium">{storyData.title}</h4>
+                    <h4 className="font-medium text-gray-900 dark:text-white">{storyData.title}</h4>
                     <button
                       onClick={() => handleSaveGeneratedStory(storyData)}
-                      className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                      className="px-3 py-1 text-xs bg-blue-600 dark:bg-blue-500 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-600"
                     >
                       Save
                     </button>
                   </div>
                   {storyData.description && (
-                    <p className="text-sm text-gray-600 mb-2">{storyData.description}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">{storyData.description}</p>
                   )}
                   {storyData.acceptance_criteria && storyData.acceptance_criteria.length > 0 && (
-                    <div className="text-sm">
-                      <strong>Acceptance Criteria:</strong>
+                    <div className="text-sm text-gray-700 dark:text-gray-300">
+                      <strong className="text-gray-900 dark:text-white">Acceptance Criteria:</strong>
                       <ul className="list-disc list-inside ml-2 mt-1">
                         {storyData.acceptance_criteria.map((ac: string, i: number) => (
                           <li key={i}>{ac}</li>
@@ -273,7 +273,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
                       </ul>
                     </div>
                   )}
-                  <div className="mt-2 text-xs text-gray-500">
+                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     Priority: {storyData.priority || 'N/A'}
                   </div>
                 </div>
@@ -286,8 +286,8 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
         <div className="p-6">
           {stories.length === 0 ? (
             <div className="text-center py-12">
-              <p className="text-gray-500 mb-4">No user stories yet</p>
-              <p className="text-sm text-gray-400 mb-4">
+              <p className="text-gray-500 dark:text-gray-400 mb-4">No user stories yet</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500 mb-4">
                 Generate user stories with AI based on your PRD, or create them manually.
               </p>
             </div>
@@ -296,13 +296,13 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
               {stories.map((story) => (
                 <div
                   key={story.id}
-                  className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition"
+                  className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition bg-white dark:bg-gray-800"
                 >
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
-                      <h3 className="font-semibold text-lg mb-1">{story.title}</h3>
+                      <h3 className="font-semibold text-lg mb-1 text-gray-900 dark:text-white">{story.title}</h3>
                       {story.description && (
-                        <div className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">
+                        <div className="text-sm text-gray-600 dark:text-gray-300 mt-2 whitespace-pre-wrap">
                           {story.description}
                         </div>
                       )}
@@ -326,18 +326,18 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
                         <option value="blocked">Blocked</option>
                         <option value="done">Done</option>
                       </select>
-                      <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                      <span className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 rounded">
                         Priority: {story.priority}
                       </span>
                       <button
                         onClick={() => handleDelete(story.id)}
-                        className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
+                        className="px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
                       >
                         Delete
                       </button>
                     </div>
                   </div>
-                  <div className="mt-2 text-xs text-gray-500">
+                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     Created: {new Date(story.created_at).toLocaleString()}
                   </div>
                 </div>

@@ -52,22 +52,22 @@ export default function ProjectDetail() {
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading...</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Loading...</div>;
   }
 
   if (!project) {
-    return <div className="text-center py-8">Project not found</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Project not found</div>;
   }
 
   return (
     <div className="px-4">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">{project.name}</h1>
-        <p className="text-gray-600">Path: {project.base_path}</p>
-        {project.tech_stack && <p className="text-gray-600">Stack: {project.tech_stack}</p>}
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">{project.name}</h1>
+        <p className="text-gray-600 dark:text-gray-400">Path: {project.base_path}</p>
+        {project.tech_stack && <p className="text-gray-600 dark:text-gray-400">Stack: {project.tech_stack}</p>}
       </div>
 
-      <div className="border-b border-gray-200 mb-6">
+      <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
         <nav className="flex space-x-8">
           {(['overview', 'prd', 'design', 'stories', 'roadmap', 'implementation', 'qa', 'release', 'stages', 'tasks', 'ai'] as const).map((tab) => (
             <button
@@ -75,8 +75,8 @@ export default function ProjectDetail() {
               onClick={() => setActiveTab(tab)}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === tab
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-blue-500 dark:border-blue-400 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
               }`}
             >
               {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -88,9 +88,9 @@ export default function ProjectDetail() {
       <div>
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h2 className="text-xl font-semibold mb-4">Project Overview</h2>
-              <div className="space-y-2">
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow dark:shadow-gray-700/50">
+              <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">Project Overview</h2>
+              <div className="space-y-2 text-gray-900 dark:text-gray-200">
                 <p>
                   <strong>Name:</strong> {project.name}
                 </p>

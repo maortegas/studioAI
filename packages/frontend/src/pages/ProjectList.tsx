@@ -30,16 +30,16 @@ export default function ProjectList() {
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading...</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Loading...</div>;
   }
 
   return (
     <div className="px-4">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Projects</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Projects</h1>
         <button
           onClick={() => setShowForm(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+          className="bg-blue-600 dark:bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition"
         >
           New Project
         </button>
@@ -52,11 +52,11 @@ export default function ProjectList() {
       )}
 
       {projects.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-lg shadow">
-          <p className="text-gray-500 mb-4">No projects yet</p>
+        <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+          <p className="text-gray-500 dark:text-gray-400 mb-4">No projects yet</p>
           <button
             onClick={() => setShowForm(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+            className="bg-blue-600 dark:bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition"
           >
             Create Your First Project
           </button>
@@ -67,14 +67,14 @@ export default function ProjectList() {
             <Link
               key={project.id}
               to={`/projects/${project.id}`}
-              className="bg-white p-6 rounded-lg shadow hover:shadow-lg transition"
+              className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow dark:shadow-gray-700/50 hover:shadow-lg dark:hover:shadow-gray-700 transition"
             >
-              <h2 className="text-xl font-semibold mb-2">{project.name}</h2>
-              <p className="text-sm text-gray-500 mb-2">Path: {project.base_path}</p>
+              <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white">{project.name}</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Path: {project.base_path}</p>
               {project.tech_stack && (
-                <p className="text-sm text-gray-600">Stack: {project.tech_stack}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-300">Stack: {project.tech_stack}</p>
               )}
-              <p className="text-xs text-gray-400 mt-4">
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-4">
                 Created: {new Date(project.created_at).toLocaleDateString()}
               </p>
             </Link>

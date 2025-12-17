@@ -110,28 +110,28 @@ export default function RoadmapView({ projectId }: RoadmapViewProps) {
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading roadmap...</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Loading roadmap...</div>;
   }
 
   return (
-    <div className="bg-white rounded-lg shadow">
-      <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+      <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
         <div>
-          <h2 className="text-xl font-semibold">Roadmap</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Roadmap</h2>
           {roadmap && (
-            <p className="text-sm text-gray-500 mt-1">{roadmap.title}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{roadmap.title}</p>
           )}
         </div>
 {!showCreateForm && (
           <div className="flex items-center space-x-2">
             {roadmap && milestones.length > 0 && (
-              <div className="flex border border-gray-300 rounded-lg overflow-hidden mr-2">
+              <div className="flex border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden mr-2">
                 <button
                   onClick={() => setViewMode('list')}
                   className={`px-3 py-2 text-sm transition ${
                     viewMode === 'list'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                      ? 'bg-blue-600 dark:bg-blue-500 text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
                   }`}
                 >
                   List
@@ -140,8 +140,8 @@ export default function RoadmapView({ projectId }: RoadmapViewProps) {
                   onClick={() => setViewMode('timeline')}
                   className={`px-3 py-2 text-sm transition ${
                     viewMode === 'timeline'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                      ? 'bg-blue-600 dark:bg-blue-500 text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
                   }`}
                 >
                   Timeline
@@ -150,14 +150,14 @@ export default function RoadmapView({ projectId }: RoadmapViewProps) {
             )}
             <button
               onClick={() => setShowCreateForm(true)}
-              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
             >
               Create Manually
             </button>
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+              className="px-4 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition disabled:opacity-50"
             >
               {generating ? 'Generating...' : 'Generate with AI'}
             </button>
@@ -175,7 +175,7 @@ export default function RoadmapView({ projectId }: RoadmapViewProps) {
 ) : roadmap && milestones.length > 0 ? (
           <div className="space-y-6">
             {roadmap.description && (
-              <div className="text-gray-600 mb-4">{roadmap.description}</div>
+              <div className="text-gray-600 dark:text-gray-300 mb-4">{roadmap.description}</div>
             )}
             
             {viewMode === 'timeline' ? (
@@ -195,42 +195,42 @@ export default function RoadmapView({ projectId }: RoadmapViewProps) {
                     return (
                       <div
                         key={milestone.id}
-                        className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition"
+                        className="border border-gray-200 dark:border-gray-700 rounded-lg p-5 hover:shadow-md dark:hover:shadow-gray-700/50 transition bg-white dark:bg-gray-800"
                       >
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex-1">
-                            <h3 className="font-semibold text-lg mb-2">
+                            <h3 className="font-semibold text-lg mb-2 text-gray-900 dark:text-white">
                               {milestone.title}
                             </h3>
                             {milestone.description && (
-                              <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">
+                              <p className="text-sm text-gray-600 dark:text-gray-300 mt-2 whitespace-pre-wrap">
                                 {milestone.description}
                               </p>
                             )}
                             {roadmapMilestone?.targetDate && (
-                              <p className="text-xs text-gray-500 mt-2">
+                              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                                 Target Date: {new Date(roadmapMilestone.targetDate).toLocaleDateString()}
                               </p>
                             )}
                           </div>
                           <div className="flex items-center space-x-2 ml-4">
-                            <span className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded">
+                            <span className="px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 rounded">
                               Milestone
                             </span>
                             <span
                               className={`px-2 py-1 text-xs rounded ${
                                 milestone.status === 'done'
-                                  ? 'bg-green-100 text-green-800'
+                                  ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300'
                                   : milestone.status === 'in_progress'
-                                  ? 'bg-yellow-100 text-yellow-800'
+                                  ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300'
                                   : milestone.status === 'blocked'
-                                  ? 'bg-red-100 text-red-800'
-                                  : 'bg-gray-100 text-gray-800'
+                                  ? 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
+                                  : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300'
                               }`}
                             >
                               {milestone.status}
                             </span>
-                            <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                            <span className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 rounded">
                               Priority: {milestone.priority}
                             </span>
                           </div>

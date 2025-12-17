@@ -143,25 +143,25 @@ export default function ArchitectureManager({ projectId }: ArchitectureManagerPr
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading architecture...</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Loading architecture...</div>;
   }
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow">
-        <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-semibold">Architecture Documentation</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+        <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Architecture Documentation</h2>
           <div className="flex space-x-2">
             <button
               onClick={() => setShowUpload(!showUpload)}
-              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
             >
               {showUpload ? 'Cancel Upload' : 'Upload File'}
             </button>
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
+              className="px-4 py-2 text-sm bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
             >
               {generating ? 'Generating...' : 'Generate with AI'}
             </button>
@@ -169,23 +169,23 @@ export default function ArchitectureManager({ projectId }: ArchitectureManagerPr
         </div>
 
         {showUpload && (
-          <div className="p-6 border-b border-gray-200">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Select File (MD, TXT, etc.)
                 </label>
                 <input
                   type="file"
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
                   accept=".md,.txt"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                 />
               </div>
               <button
                 onClick={handleFileUpload}
                 disabled={!file || uploading}
-                className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+                className="w-full bg-blue-600 dark:bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition disabled:opacity-50"
               >
                 {uploading ? 'Uploading...' : 'Upload Architecture'}
               </button>
@@ -197,20 +197,20 @@ export default function ArchitectureManager({ projectId }: ArchitectureManagerPr
           {architecture ? (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
                   Last updated: {new Date(architecture.created_at).toLocaleString()}
                 </p>
                 <div className="flex space-x-2">
                   <button
                     onClick={() => setPreview(!preview)}
-                    className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                    className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
                   >
                     {preview ? 'Edit' : 'Preview'}
                   </button>
                   <button
                     onClick={handleSave}
                     disabled={uploading}
-                    className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+                    className="px-4 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition disabled:opacity-50"
                   >
                     {uploading ? 'Saving...' : 'Save'}
                   </button>
@@ -218,14 +218,14 @@ export default function ArchitectureManager({ projectId }: ArchitectureManagerPr
               </div>
 
               {preview ? (
-                <div className="prose max-w-none border border-gray-200 rounded-lg p-6">
+                <div className="prose dark:prose-invert max-w-none border border-gray-200 dark:border-gray-700 rounded-lg p-6 bg-gray-50 dark:bg-gray-900/50 prose-headings:text-gray-900 dark:prose-headings:text-white prose-p:text-gray-700 dark:prose-p:text-gray-300">
                   <ReactMarkdown>{content}</ReactMarkdown>
                 </div>
               ) : (
                 <textarea
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  className="w-full h-96 p-4 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full h-96 p-4 border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                   placeholder="# Architecture Documentation
 
 ## System Architecture Overview
@@ -256,12 +256,12 @@ export default function ArchitectureManager({ projectId }: ArchitectureManagerPr
             </div>
           ) : (
             <div className="text-center py-12">
-              <p className="text-gray-500 mb-4">No architecture documentation yet</p>
+              <p className="text-gray-500 dark:text-gray-400 mb-4">No architecture documentation yet</p>
               <div className="flex justify-center space-x-4">
                 <button
                   onClick={handleGenerate}
                   disabled={generating}
-                  className="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
+                  className="bg-purple-600 dark:bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
                 >
                   {generating ? 'Generating...' : 'Generate with AI'}
                 </button>
@@ -443,26 +443,26 @@ function ADRManager({ projectId }: { projectId: string }) {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-lg shadow">
-        <div className="border-b border-gray-200 px-6 py-4">
-          <h2 className="text-xl font-semibold">Architectural Decision Records (ADRs)</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+        <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Architectural Decision Records (ADRs)</h2>
         </div>
-        <div className="p-6 text-center">Loading ADRs...</div>
+        <div className="p-6 text-center text-gray-900 dark:text-white">Loading ADRs...</div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-lg shadow">
-      <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-        <h2 className="text-xl font-semibold">Architectural Decision Records (ADRs)</h2>
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+      <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Architectural Decision Records (ADRs)</h2>
         <div className="flex space-x-2">
           <button
             onClick={() => {
               setShowUpload(!showUpload);
               setShowGenerate(false);
             }}
-            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+            className="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
           >
             {showUpload ? 'Cancel Upload' : 'Upload ADR'}
           </button>
@@ -471,7 +471,7 @@ function ADRManager({ projectId }: { projectId: string }) {
               setShowGenerate(!showGenerate);
               setShowUpload(false);
             }}
-            className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+            className="px-4 py-2 text-sm bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition"
           >
             Generate with AI
           </button>
@@ -480,24 +480,24 @@ function ADRManager({ projectId }: { projectId: string }) {
 
       {/* Generate ADR Form */}
       {showGenerate && (
-        <div className="p-6 border-b border-gray-200 bg-gray-50">
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Decision Context (What decision needs to be made?)
               </label>
               <textarea
                 value={decisionContext}
                 onChange={(e) => setDecisionContext(e.target.value)}
                 placeholder="Describe the architectural decision that needs to be made. For example: 'Should we use a microservices or monolithic architecture?' or 'Which database should we use for storing user sessions?'"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 h-24"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 h-24"
               />
             </div>
             <div className="flex space-x-2">
               <button
                 onClick={handleGenerate}
                 disabled={!decisionContext.trim() || generating}
-                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
+                className="px-4 py-2 bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
               >
                 {generating ? 'Generating...' : 'Generate ADR'}
               </button>
@@ -506,7 +506,7 @@ function ADRManager({ projectId }: { projectId: string }) {
                   setShowGenerate(false);
                   setDecisionContext('');
                 }}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
               >
                 Cancel
               </button>
@@ -517,21 +517,21 @@ function ADRManager({ projectId }: { projectId: string }) {
 
       {/* Generated ADR Editor */}
       {adrContent && !selectedADR && (
-        <div className="p-6 border-b border-gray-200 bg-blue-50">
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <h3 className="font-medium">Review Generated ADR</h3>
+              <h3 className="font-medium text-gray-900 dark:text-white">Review Generated ADR</h3>
               <div className="flex space-x-2">
                 <button
                   onClick={() => setPreview(!preview)}
-                  className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50"
+                  className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
                 >
                   {preview ? 'Edit' : 'Preview'}
                 </button>
                 <button
                   onClick={handleSaveADR}
                   disabled={uploading}
-                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  className="px-3 py-1 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50"
                 >
                   {uploading ? 'Saving...' : 'Save ADR'}
                 </button>
@@ -540,21 +540,21 @@ function ADRManager({ projectId }: { projectId: string }) {
                     setAdrContent('');
                     setShowGenerate(true);
                   }}
-                  className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50"
+                  className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
                 >
                   Discard
                 </button>
               </div>
             </div>
             {preview ? (
-              <div className="prose max-w-none border border-gray-200 rounded-lg p-4 bg-white">
+              <div className="prose dark:prose-invert max-w-none border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-900/50 prose-headings:text-gray-900 dark:prose-headings:text-white prose-p:text-gray-700 dark:prose-p:text-gray-300">
                 <ReactMarkdown>{adrContent}</ReactMarkdown>
               </div>
             ) : (
               <textarea
                 value={adrContent}
                 onChange={(e) => setAdrContent(e.target.value)}
-                className="w-full h-96 p-4 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full h-96 p-4 border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
             )}
           </div>
@@ -563,23 +563,23 @@ function ADRManager({ projectId }: { projectId: string }) {
 
       {/* Upload ADR Form */}
       {showUpload && (
-        <div className="p-6 border-b border-gray-200 bg-gray-50">
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Select ADR File (MD, TXT, etc.)
               </label>
               <input
                 type="file"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                 accept=".md,.txt"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
             </div>
             <button
               onClick={handleFileUpload}
               disabled={!file || uploading}
-              className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+              className="w-full bg-blue-600 dark:bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition disabled:opacity-50"
             >
               {uploading ? 'Uploading...' : 'Upload ADR'}
             </button>
@@ -591,8 +591,8 @@ function ADRManager({ projectId }: { projectId: string }) {
       <div className="p-6">
         {adrs.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-gray-500 mb-4">No ADRs yet</p>
-            <p className="text-sm text-gray-400">
+            <p className="text-gray-500 dark:text-gray-400 mb-4">No ADRs yet</p>
+            <p className="text-sm text-gray-400 dark:text-gray-500">
               Generate ADRs with AI or upload them manually to document architectural decisions.
             </p>
           </div>
@@ -606,29 +606,29 @@ function ADRManager({ projectId }: { projectId: string }) {
               return (
                 <div
                   key={adr.id}
-                  className={`border rounded-lg p-4 hover:bg-gray-50 transition ${
-                    selectedADR?.id === adr.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                  className={`border rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition bg-white dark:bg-gray-800 ${
+                    selectedADR?.id === adr.id ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'
                   }`}
                 >
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
-                      <h3 className="font-medium text-lg">
+                      <h3 className="font-medium text-lg text-gray-900 dark:text-white">
                         ADR-{adrNum.toString().padStart(3, '0')}: {fileName.replace('.md', '')}
                       </h3>
-                      <p className="text-sm text-gray-500 mt-1">
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                         Created: {new Date(adr.created_at).toLocaleString()}
                       </p>
                     </div>
                     <div className="flex space-x-2">
                       <button
                         onClick={() => handleViewADR(adr)}
-                        className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50"
+                        className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
                       >
                         {selectedADR?.id === adr.id ? 'Hide' : 'View'}
                       </button>
                       <button
                         onClick={() => handleDeleteADR(adr.id)}
-                        className="px-3 py-1 text-sm border border-red-300 text-red-600 rounded hover:bg-red-50"
+                        className="px-3 py-1 text-sm border border-red-300 dark:border-red-600 text-red-600 dark:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
                       >
                         Delete
                       </button>
@@ -636,25 +636,25 @@ function ADRManager({ projectId }: { projectId: string }) {
                   </div>
                   
                   {selectedADR?.id === adr.id && (
-                    <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm font-medium">ADR Content</span>
+                        <span className="text-sm font-medium text-gray-900 dark:text-white">ADR Content</span>
                         <button
                           onClick={() => setPreview(!preview)}
-                          className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+                          className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
                         >
                           {preview ? 'Edit' : 'Preview'}
                         </button>
                       </div>
                       {preview ? (
-                        <div className="prose max-w-none border border-gray-200 rounded-lg p-4 bg-white">
+                        <div className="prose dark:prose-invert max-w-none border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-900/50 prose-headings:text-gray-900 dark:prose-headings:text-white prose-p:text-gray-700 dark:prose-p:text-gray-300">
                           <ReactMarkdown>{adrContent}</ReactMarkdown>
                         </div>
                       ) : (
                         <textarea
                           value={adrContent}
                           onChange={(e) => setAdrContent(e.target.value)}
-                          className="w-full h-64 p-3 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full h-64 p-3 border border-gray-300 dark:border-gray-600 rounded-lg font-mono text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                         />
                       )}
                       <div className="mt-2 flex justify-end">
@@ -664,7 +664,7 @@ function ADRManager({ projectId }: { projectId: string }) {
                             showToast('ADR updated successfully!', 'success');
                             await loadADRs();
                           }}
-                          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                          className="px-4 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600"
                         >
                           Update ADR
                         </button>

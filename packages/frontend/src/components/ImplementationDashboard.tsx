@@ -138,29 +138,29 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300';
       case 'running':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300';
       case 'failed':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300';
       case 'pending':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300';
     }
   };
 
   const getProgrammerBadge = (type: string) => {
     const colors = {
-      backend: 'bg-purple-100 text-purple-800',
-      frontend: 'bg-pink-100 text-pink-800',
-      fullstack: 'bg-indigo-100 text-indigo-800',
+      backend: 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300',
+      frontend: 'bg-pink-100 dark:bg-pink-900/30 text-pink-800 dark:text-pink-300',
+      fullstack: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-300',
     };
-    return colors[type as keyof typeof colors] || 'bg-gray-100 text-gray-800';
+    return colors[type as keyof typeof colors] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300';
   };
 
   if (loading) {
-    return <div className="text-center py-8">Loading implementation dashboard...</div>;
+    return <div className="text-center py-8 text-gray-900 dark:text-white">Loading implementation dashboard...</div>;
   }
 
   const availableStories = stories.filter((story) => !getStorySession(story.id));
@@ -174,34 +174,34 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
       {/* Statistics */}
       {dashboard && (
         <div className="grid grid-cols-5 gap-4">
-          <div className="bg-white rounded-lg shadow p-4 border-t-4 border-blue-500">
-            <div className="text-2xl font-bold text-gray-900">{dashboard.total_stories}</div>
-            <div className="text-sm text-gray-600">Total Stories</div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-blue-500">
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.total_stories}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Total Stories</div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 border-t-4 border-green-500">
-            <div className="text-2xl font-bold text-gray-900">{dashboard.completed_stories}</div>
-            <div className="text-sm text-gray-600">Completed</div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-green-500">
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.completed_stories}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Completed</div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 border-t-4 border-yellow-500">
-            <div className="text-2xl font-bold text-gray-900">{dashboard.in_progress}</div>
-            <div className="text-sm text-gray-600">In Progress</div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-yellow-500">
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.in_progress}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">In Progress</div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 border-t-4 border-gray-500">
-            <div className="text-2xl font-bold text-gray-900">{dashboard.pending}</div>
-            <div className="text-sm text-gray-600">Pending</div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-gray-500">
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.pending}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Pending</div>
           </div>
-          <div className="bg-white rounded-lg shadow p-4 border-t-4 border-red-500">
-            <div className="text-2xl font-bold text-gray-900">{dashboard.failed}</div>
-            <div className="text-sm text-gray-600">Failed</div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-red-500">
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.failed}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Failed</div>
           </div>
         </div>
       )}
 
       {/* Active Sessions */}
       {activeSessions.length > 0 && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="border-b border-gray-200 px-6 py-4">
-            <h2 className="text-xl font-semibold">Active Coding Sessions</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Active Coding Sessions</h2>
           </div>
           <div className="p-6 space-y-3">
             {activeSessions.map((session) => {
@@ -209,7 +209,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
               return (
                 <div
                   key={session.id}
-                  className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
+                  className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md dark:hover:shadow-gray-700/50 transition bg-white dark:bg-gray-800"
                 >
                   <div className="flex justify-between items-start mb-3">
                     <div className="flex-1 cursor-pointer" onClick={() => setViewingSession(session)}>
@@ -221,15 +221,15 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                           {session.status}
                         </span>
                       </div>
-                      <h3 className="font-semibold text-gray-900">{story?.title || 'Unknown Story'}</h3>
+                      <h3 className="font-semibold text-gray-900 dark:text-white">{story?.title || 'Unknown Story'}</h3>
                       {session.current_file && (
-                        <p className="text-xs text-gray-500 mt-1 font-mono">📄 {session.current_file}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono">📄 {session.current_file}</p>
                       )}
                     </div>
                     <div className="flex items-center space-x-2 ml-4">
                       <div className="text-right mr-2">
-                        <div className="text-2xl font-bold text-gray-900">{session.progress}%</div>
-                        <div className="text-xs text-gray-500">progress</div>
+                        <div className="text-2xl font-bold text-gray-900 dark:text-white">{session.progress}%</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">progress</div>
                       </div>
                       <div className="flex items-center space-x-2">
                         {session.status === 'generating_tests' && (
@@ -295,8 +295,8 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                     </div>
                   </div>
                   <div className="mt-3">
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div className="relative w-full bg-gray-200 rounded-full h-2">
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div className="relative w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                         {/* Test progress (0-50%) */}
                         {((session as any).test_progress || 0) > 0 && (
                           <div
@@ -341,18 +341,18 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
 
       {/* Start Implementation */}
       {availableStories.length > 0 && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
             <div>
-              <h2 className="text-xl font-semibold">Start Implementation</h2>
-              <p className="text-sm text-gray-500 mt-1">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Start Implementation</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 Select user stories to assign to AI developers
               </p>
             </div>
             <button
               onClick={handleStartImplementation}
               disabled={selectedStories.size === 0 || starting}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {starting ? 'Starting...' : `Start ${selectedStories.size} Selected`}
             </button>
@@ -362,7 +362,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
               {availableStories.map((story) => (
                 <label
                   key={story.id}
-                  className="flex items-center space-x-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition"
+                  className="flex items-center space-x-3 p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition bg-white dark:bg-gray-800"
                 >
                   <input
                     type="checkbox"
@@ -371,15 +371,15 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                     className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="flex-1">
-                    <div className="font-medium text-gray-900">{story.title}</div>
+                    <div className="font-medium text-gray-900 dark:text-white">{story.title}</div>
                     {story.description && (
-                      <div className="text-sm text-gray-500 mt-1 line-clamp-1">
+                      <div className="text-sm text-gray-500 dark:text-gray-400 mt-1 line-clamp-1">
                         {story.description}
                       </div>
                     )}
                   </div>
                   <div className="flex items-center space-x-2">
-                    <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
+                    <span className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
                       Priority: {story.priority}
                     </span>
                   </div>
@@ -392,9 +392,9 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
 
       {/* Completed/Failed Sessions */}
       {dashboard && dashboard.sessions.filter((s) => s.status === 'completed' || s.status === 'failed').length > 0 && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="border-b border-gray-200 px-6 py-4">
-            <h2 className="text-xl font-semibold">Session History</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
+          <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Session History</h2>
           </div>
           <div className="p-6">
             <div className="space-y-2">
@@ -405,7 +405,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                   return (
                     <div
                       key={session.id}
-                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
+                      className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md dark:hover:shadow-gray-700/50 transition bg-white dark:bg-gray-800"
                     >
                       <div className="flex justify-between items-center">
                         <div className="flex items-center space-x-3 flex-1 cursor-pointer" onClick={() => setViewingSession(session)}>
@@ -415,16 +415,16 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                           <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(session.status)}`}>
                             {session.status}
                           </span>
-                          <span className="font-medium text-gray-900">{story?.title || 'Unknown Story'}</span>
+                          <span className="font-medium text-gray-900 dark:text-white">{story?.title || 'Unknown Story'}</span>
                         </div>
                         <div className="flex items-center space-x-3">
-                          <div className="text-xs text-gray-500">
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
                             {session.completed_at && new Date(session.completed_at).toLocaleString()}
                           </div>
                           {session.status === 'failed' && (
                             <button
                               onClick={(e) => handleRetrySession(session.id, e)}
-                              className="flex items-center space-x-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                              className="flex items-center space-x-1 px-3 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -434,7 +434,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                           )}
                           <button
                             onClick={(e) => handleDeleteSession(session.id, e)}
-                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg transition border border-red-300"
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition border border-red-300 dark:border-red-600"
                             title="Delete"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

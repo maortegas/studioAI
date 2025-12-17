@@ -122,21 +122,21 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-2xl w-full max-w-6xl h-5/6 flex flex-col">
+    <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-2xl w-full max-w-6xl h-5/6 flex flex-col">
         {/* Header */}
-        <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+        <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
           <div className="flex items-center space-x-4">
             <div className="text-3xl">{getProgrammerIcon()}</div>
             <div>
-              <h2 className="text-xl font-semibold">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
                 {session.programmer_type.charAt(0).toUpperCase() + session.programmer_type.slice(1)} Developer
               </h2>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 {isConnected ? (
-                  <span className="text-green-600">● Connected</span>
+                  <span className="text-green-600 dark:text-green-400">● Connected</span>
                 ) : (
-                  <span className="text-gray-400">○ Disconnected</span>
+                  <span className="text-gray-400 dark:text-gray-500">○ Disconnected</span>
                 )}
               </p>
             </div>
@@ -144,12 +144,12 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
               <div className={`w-3 h-3 rounded-full ${getStatusColor()}`} />
-              <span className="text-sm font-medium capitalize">{status}</span>
+              <span className="text-sm font-medium capitalize text-gray-900 dark:text-white">{status}</span>
             </div>
             {onClose && (
               <button
                 onClick={onClose}
-                className="text-gray-400 hover:text-gray-600 transition"
+                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -160,14 +160,14 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
         </div>
 
         {/* Progress Bars */}
-        <div className="px-6 py-3 border-b border-gray-200 space-y-3">
+        <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700 space-y-3">
           {/* Overall Progress */}
           <div>
             <div className="flex justify-between items-center mb-2">
-              <span className="text-sm font-medium text-gray-700">Overall Progress</span>
-              <span className="text-sm font-medium text-gray-900">{progress}%</span>
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Overall Progress</span>
+              <span className="text-sm font-medium text-gray-900 dark:text-white">{progress}%</span>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
               <div
                 className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all duration-500"
                 style={{ width: `${progress}%` }}
@@ -180,10 +180,10 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-xs font-medium text-gray-600">Test Generation</span>
-                  <span className="text-xs text-gray-500">{testProgress}/50%</span>
+                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Test Generation</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{testProgress}/50%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                   <div
                     className={`h-1.5 rounded-full transition-all duration-500 ${
                       testProgress === 50 ? 'bg-green-500' : 'bg-yellow-500'
@@ -194,10 +194,10 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
               </div>
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-xs font-medium text-gray-600">Implementation</span>
-                  <span className="text-xs text-gray-500">{implementationProgress}/50%</span>
+                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Implementation</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{implementationProgress}/50%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                   <div
                     className={`h-1.5 rounded-full transition-all duration-500 ${
                       implementationProgress === 50 ? 'bg-green-500' : status === 'running' ? 'bg-blue-500' : 'bg-gray-400'
@@ -212,18 +212,18 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
           {/* Phase Indicator */}
           <div className="flex items-center space-x-2 text-xs">
             {status === 'generating_tests' && (
-              <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded">🧪 Generating Tests...</span>
+              <span className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 rounded">🧪 Generating Tests...</span>
             )}
             {status === 'tests_generated' && (
-              <span className="px-2 py-1 bg-green-100 text-green-800 rounded">✅ Tests Generated</span>
+              <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 rounded">✅ Tests Generated</span>
             )}
             {(status === 'running' || status === 'completed') && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded">💻 Implementing...</span>
+              <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 rounded">💻 Implementing...</span>
             )}
           </div>
           
           {currentFile && (
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
               📄 Currently working on: <span className="font-mono">{currentFile}</span>
             </p>
           )}
@@ -237,8 +237,8 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
                 <button
                   className={`px-3 py-1 text-xs rounded-lg transition ${
                     status === 'generating_tests' || status === 'tests_generated'
-                      ? 'bg-yellow-100 text-yellow-800 font-medium'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 font-medium'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
                   }`}
                 >
                   🧪 Tests
@@ -247,8 +247,8 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
               <button
                 className={`px-3 py-1 text-xs rounded-lg transition ${
                   status === 'running' || status === 'completed'
-                    ? 'bg-blue-100 text-blue-800 font-medium'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 font-medium'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
                 💻 Implementation
@@ -260,7 +260,7 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
                   outputRef.current.scrollTop = outputRef.current.scrollHeight;
                 }
               }}
-              className="text-xs px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+              className="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition text-gray-700 dark:text-gray-300"
             >
               Scroll to Bottom
             </button>
@@ -268,7 +268,7 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
           
           <div
             ref={outputRef}
-            className="flex-1 bg-gray-900 text-green-400 rounded-lg p-4 overflow-y-auto font-mono text-sm"
+            className="flex-1 bg-gray-900 dark:bg-black text-green-400 dark:text-green-500 rounded-lg p-4 overflow-y-auto font-mono text-sm"
             style={{ fontFamily: 'Menlo, Monaco, Consolas, monospace' }}
           >
             {/* Show tests output if available and in test phase */}
@@ -289,7 +289,7 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
                 <pre className="whitespace-pre-wrap break-words">{output}</pre>
               </div>
             ) : !testsOutput && (
-              <div className="flex items-center justify-center h-full text-gray-500">
+              <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
                 <div className="text-center">
                   <div className="text-4xl mb-2">⏳</div>
                   <p>Waiting for output...</p>
@@ -304,8 +304,8 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
         </div>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 px-6 py-4 bg-gray-50">
-          <div className="flex justify-between items-center text-xs text-gray-500">
+        <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-900/50">
+          <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
             <div>
               Session ID: <span className="font-mono">{session.id.slice(0, 8)}</span>
             </div>
