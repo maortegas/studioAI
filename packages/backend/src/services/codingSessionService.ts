@@ -1,23 +1,30 @@
 import { CodingSessionRepository } from '../repositories/codingSessionRepository';
 import { TaskRepository } from '../repositories/taskRepository';
 import { AIService } from './aiService';
+import { ProjectStructureService } from './projectStructureService';
+import { ProjectRepository } from '../repositories/projectRepository';
 import { 
   CodingSession, 
   CreateCodingSessionRequest, 
   StartImplementationRequest,
   ProgrammerType,
-  ImplementationDashboard
+  ImplementationDashboard,
+  TestStrategy
 } from '@devflow-studio/shared';
 
 export class CodingSessionService {
   private sessionRepo: CodingSessionRepository;
   private taskRepo: TaskRepository;
   private aiService: AIService;
+  private projectRepo: ProjectRepository;
+  private structureService: ProjectStructureService;
 
   constructor() {
     this.sessionRepo = new CodingSessionRepository();
     this.taskRepo = new TaskRepository();
     this.aiService = new AIService();
+    this.projectRepo = new ProjectRepository();
+    this.structureService = new ProjectStructureService();
   }
 
   /**
@@ -57,7 +64,7 @@ export class CodingSessionService {
     if (testStrategy === 'tdd') {
       // TDD: Generate tests BEFORE implementation
       // Step 1: Create AI job for TEST GENERATION first
-      const testPrompt = this.buildTestGenerationPrompt(story, data.programmer_type, true);
+      const testPrompt = await this.buildTestGenerationPrompt(story, data.programmer_type, data.project_id, true);
       const testJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -81,7 +88,7 @@ export class CodingSessionService {
       );
     } else if (testStrategy === 'after') {
       // 'after': Skip test generation, start implementation directly, generate tests after
-      const implementationPrompt = this.buildImplementationPrompt(story, data.programmer_type, undefined);
+      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined);
       const implJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -106,7 +113,7 @@ export class CodingSessionService {
       );
     } else {
       // 'none': Skip test generation entirely, start implementation directly, no tests after
-      const implementationPrompt = this.buildImplementationPrompt(story, data.programmer_type, undefined);
+      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined);
       const implJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -138,6 +145,19 @@ export class CodingSessionService {
    * Start implementation for multiple stories
    */
   async startImplementation(data: StartImplementationRequest): Promise<CodingSession[]> {
+    // Get project to create directory structure
+    const project = await this.projectRepo.findById(data.project_id);
+    if (project) {
+      try {
+        // Create recommended directory structure for the tech stack
+        await this.structureService.createProjectStructure(project.base_path, project.tech_stack);
+        console.log(`Created project structure for ${project.name} with tech stack: ${project.tech_stack || 'generic'}`);
+      } catch (error: any) {
+        console.error(`Failed to create project structure: ${error.message}`);
+        // Don't fail the implementation if structure creation fails
+      }
+    }
+
     const sessions: CodingSession[] = [];
 
     for (const storyId of data.story_ids) {
@@ -376,7 +396,7 @@ export class CodingSessionService {
   /**
    * Build test generation prompt
    */
-  private buildTestGenerationPrompt(story: any, programmerType: ProgrammerType, unitTestsOnly: boolean = true): string {
+  private async buildTestGenerationPrompt(story: any, programmerType: ProgrammerType, projectId: string, unitTestsOnly: boolean = true): Promise<string> {
     const lines: string[] = [];
 
     lines.push(`# Test Generation Task: ${story.title}\n`);
@@ -386,6 +406,21 @@ export class CodingSessionService {
     if (story.description) {
       lines.push(`## User Story\n`);
       lines.push(`${story.description}\n\n`);
+    }
+
+    // Get project info for structure
+    const project = await this.projectRepo.findById(projectId);
+    if (project) {
+      const structure = this.structureService.getRecommendedStructure(project.tech_stack);
+      lines.push(`## Project Structure\n`);
+      lines.push(`This project uses a **monorepo structure** with apps/ and packages/ directories.\n`);
+      lines.push(`${structure.description}\n\n`);
+      lines.push(`**IMPORTANT: Save test files in the appropriate directory:**\n`);
+      const testPath = this.structureService.getRecommendedPath('', 'test', project.tech_stack);
+      lines.push(`- Unit tests: Save in \`${testPath}/unit/\` directory\n`);
+      lines.push(`- Integration tests: Save in \`${testPath}/integration/\` directory (if generating integration tests)\n`);
+      lines.push(`- E2E tests: Save in \`tests/e2e/\` directory (if generating e2e tests)\n`);
+      lines.push(`- Follow the naming convention: \`*.test.js\` or \`*.spec.js\`\n\n`);
     }
 
     lines.push(`## Instructions\n`);
@@ -441,14 +476,14 @@ export class CodingSessionService {
   /**
    * Build implementation prompt (alias for buildCodingPrompt)
    */
-  private buildImplementationPrompt(story: any, programmerType: ProgrammerType, testsOutput?: string): string {
-    return this.buildCodingPrompt(story, programmerType, testsOutput);
+  private async buildImplementationPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string): Promise<string> {
+    return this.buildCodingPrompt(story, programmerType, projectId, testsOutput);
   }
 
   /**
    * Build implementation prompt based on story, programmer type, and generated tests
    */
-  private buildCodingPrompt(story: any, programmerType: ProgrammerType, testsOutput?: string): string {
+  private async buildCodingPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string): Promise<string> {
     const lines: string[] = [];
 
     lines.push(`# Coding Task: ${story.title}\n`);
@@ -458,6 +493,47 @@ export class CodingSessionService {
     if (story.description) {
       lines.push(`## User Story\n`);
       lines.push(`${story.description}\n\n`);
+    }
+
+    // Get project info for structure
+    const project = await this.projectRepo.findById(projectId);
+    if (project) {
+      const structure = this.structureService.getRecommendedStructure(project.tech_stack);
+      lines.push(`## Project Structure\n`);
+      lines.push(`This project uses a **monorepo structure** with the following organization:\n`);
+      lines.push(`- \`apps/\` - Deployable applications (shop-web, customer-app, admin-dashboard, api-gateway)\n`);
+      lines.push(`- \`packages/\` - Shared libraries (ui-components, auth-logic, utils, database)\n`);
+      lines.push(`- \`tools/\` - Automation scripts and generators\n`);
+      lines.push(`- \`infra/\` - Infrastructure configuration (Terraform, Docker, Kubernetes)\n`);
+      lines.push(`- \`docs/\` - Project documentation\n\n`);
+      lines.push(`${structure.description}\n\n`);
+      lines.push(`**IMPORTANT: Save files in the appropriate directories within the monorepo:**\n`);
+
+      if (programmerType === 'backend' || programmerType === 'fullstack') {
+        const backendPath = this.structureService.getRecommendedPath('', 'backend', project.tech_stack);
+        lines.push(`- Backend code: Save in \`${backendPath}\` directory (typically \`apps/api-gateway/src/\`)\n`);
+        lines.push(`  - Controllers/Routes: Place API endpoints in controllers/routes subdirectories\n`);
+        lines.push(`  - Services: Place business logic in services subdirectories\n`);
+        lines.push(`  - Models: Place data models in models subdirectories\n`);
+        const dbPath = this.structureService.getRecommendedPath('', 'database', project.tech_stack);
+        lines.push(`  - Database migrations: Save in \`${dbPath}/migrations/\` directory\n`);
+        lines.push(`  - Shared utilities: Place in \`packages/utils/\` if reusable across apps\n`);
+        lines.push(`  - Auth logic: Place in \`packages/auth-logic/\` if shared\n`);
+      }
+
+      if (programmerType === 'frontend' || programmerType === 'fullstack') {
+        const frontendPath = this.structureService.getRecommendedPath('', 'frontend', project.tech_stack);
+        lines.push(`- Frontend code: Save in \`${frontendPath}\` directory (typically \`apps/shop-web/src/\` or \`apps/admin-dashboard/src/\`)\n`);
+        lines.push(`  - Components: Place React/Vue components in components subdirectories\n`);
+        lines.push(`  - Pages: Place page components in pages subdirectories\n`);
+        lines.push(`  - Services/Utils: Place API clients and utilities in services/utils subdirectories\n`);
+        lines.push(`  - Shared UI components: Place reusable components in \`packages/ui-components/\`\n`);
+      }
+      
+      lines.push(`- Documentation: Save in \`docs/\` directory\n`);
+      
+      lines.push(`- Configuration files: Save in \`config/\` directory\n`);
+      lines.push(`- Documentation: Save in \`docs/\` directory\n\n`);
     }
 
     lines.push(`## Instructions\n`);
@@ -522,7 +598,7 @@ export class CodingSessionService {
     }
 
     // Create AI job for implementation
-    const implementationPrompt = this.buildCodingPrompt(story, session.programmer_type, (session as any).tests_output);
+    const implementationPrompt = await this.buildCodingPrompt(story, session.programmer_type, session.project_id, (session as any).tests_output);
     const implementationJob = await this.aiService.createAIJob({
       project_id: session.project_id,
       task_id: session.story_id,

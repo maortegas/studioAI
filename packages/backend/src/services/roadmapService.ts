@@ -52,7 +52,7 @@ export class RoadmapService {
       updatedAt: new Date(),
     };
 
-    const filePath = path.join(project.base_path, 'artifacts', 'ROADMAP.md');
+    const filePath = path.join(project.base_path, 'docs', 'ROADMAP.md');
     const markdownContent = this.generateRoadmapMarkdown(roadmapData);
 
     await createFile(filePath, markdownContent);
@@ -70,7 +70,7 @@ export class RoadmapService {
         {
           project_id: data.project_id,
           type: 'roadmap',
-          path: 'artifacts/ROADMAP.md',
+          path: 'docs/ROADMAP.md',
           content: roadmapData,
         },
         markdownContent
@@ -145,7 +145,7 @@ export class RoadmapService {
     }
 
     // Update artifact file and content
-    const filePath = path.join(project.base_path, 'artifacts', 'ROADMAP.md');
+    const filePath = path.join(project.base_path, 'docs', 'ROADMAP.md');
     const markdownContent = this.generateRoadmapMarkdown(updatedRoadmap);
     
     // Update file system

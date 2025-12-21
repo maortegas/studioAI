@@ -1,4 +1,7 @@
-export type TestType = 'unit' | 'integration' | 'e2e' | 'performance' | 'security';
+import { TestType } from './qa';
+
+// Re-export TestType for backward compatibility
+export type { TestType };
 export type TestSuiteStatus = 'pending' | 'generating' | 'ready' | 'running' | 'passed' | 'failed' | 'skipped';
 export type TestExecutionType = 'auto' | 'manual' | 'ci';
 export type TestExecutionStatus = 'running' | 'passed' | 'failed' | 'skipped' | 'error';

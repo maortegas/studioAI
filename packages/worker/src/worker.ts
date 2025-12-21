@@ -599,52 +599,8 @@ async function processJob(jobId: string) {
         }
       }
       
-      // Auto-save artifacts based on job type
-      const jobArgs = job.args || {};
-      const prompt = jobArgs.prompt || '';
-      
-      // Save Architecture
-      if (prompt.includes('architecture documentation') || prompt.includes('Architecture') || 
-          prompt.includes('System Architecture Overview')) {
-        try {
-          // Get project to find base_path
-          const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [job.project_id]);
-          if (projectResult.rows.length > 0) {
-            const project = projectResult.rows[0];
-            const architecturePath = path.join(project.base_path, 'artifacts', 'ARCHITECTURE.md');
-            
-            // Ensure artifacts directory exists
-            await fs.mkdir(path.dirname(architecturePath), { recursive: true });
-            
-            // Save architecture file
-            await fs.writeFile(architecturePath, result.output, 'utf8');
-            
-            // Save to database
-            const artifactResult = await pool.query(
-              `INSERT INTO artifacts (project_id, type, path, content)
-               VALUES ($1, $2, $3, $4)
-               ON CONFLICT DO NOTHING
-               RETURNING *`,
-              [job.project_id, 'architecture', architecturePath, JSON.stringify({ content: result.output })]
-            );
-            
-            // If artifact already exists, update it
-            if (artifactResult.rows.length === 0) {
-              await pool.query(
-                `UPDATE artifacts 
-                 SET content = $1, path = $2 
-                 WHERE project_id = $3 AND type = 'architecture'`,
-                [JSON.stringify({ content: result.output }), architecturePath, job.project_id]
-              );
-            }
-            
-            console.log(`Architecture saved automatically for project ${job.project_id}`);
-          }
-        } catch (error: any) {
-          console.error(`Failed to auto-save architecture: ${error.message}`);
-          // Don't fail the job if auto-save fails
-        }
-      }
+      // Note: Architecture is saved manually by the user after reviewing the generated content
+      // Auto-save removed to prevent duplicate files and allow user review before saving
       
       // Process QA results
       if (isQASession) {
@@ -995,7 +951,7 @@ async function processJob(jobId: string) {
             const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [job.project_id]);
             if (projectResult.rows.length > 0) {
               const project = projectResult.rows[0];
-              const testDir = path.join(project.base_path, 'artifacts', `TESTS_${qaSessionId}`);
+              const testDir = path.join(project.base_path, 'docs', `TESTS_${qaSessionId}`);
               await fs.mkdir(testDir, { recursive: true });
               
               // Save individual test file for this story
@@ -1032,7 +988,7 @@ async function processJob(jobId: string) {
                 // All test generation jobs completed
                 await pool.query(
                   'UPDATE qa_sessions SET status = $1, report_path = $2, completed_at = $3 WHERE id = $4',
-                  ['completed', `artifacts/TESTS_${qaSessionId}/all_tests.js`, new Date(), qaSessionId]
+                  ['completed', `docs/TESTS_${qaSessionId}/all_tests.js`, new Date(), qaSessionId]
                 );
                 console.log(`All test generation completed for QA session ${qaSessionId} (${totalStories} stories)`);
               } else {
@@ -1298,13 +1254,13 @@ async function processJob(jobId: string) {
             const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [job.project_id]);
             if (projectResult.rows.length > 0) {
               const project = projectResult.rows[0];
-              const reportPath = path.join(project.base_path, 'artifacts', `QA_REPORT_${qaSessionId}.json`);
+              const reportPath = path.join(project.base_path, 'docs', `QA_REPORT_${qaSessionId}.json`);
               await fs.mkdir(path.dirname(reportPath), { recursive: true });
               await fs.writeFile(reportPath, JSON.stringify(qaData, null, 2), 'utf8');
               
               await pool.query(
                 'UPDATE qa_sessions SET report_path = $1 WHERE id = $2',
-                [`artifacts/QA_REPORT_${qaSessionId}.json`, qaSessionId]
+                [`docs/QA_REPORT_${qaSessionId}.json`, qaSessionId]
               );
             }
 
@@ -1326,9 +1282,9 @@ async function processJob(jobId: string) {
           const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [job.project_id]);
           if (projectResult.rows.length > 0) {
             const project = projectResult.rows[0];
-            const roadmapPath = path.join(project.base_path, 'artifacts', 'ROADMAP.md');
+            const roadmapPath = path.join(project.base_path, 'docs', 'ROADMAP.md');
             
-            // Ensure artifacts directory exists
+            // Ensure docs directory exists
             await fs.mkdir(path.dirname(roadmapPath), { recursive: true });
             
             // Parse milestones from AI output
@@ -1384,7 +1340,7 @@ async function processJob(jobId: string) {
                VALUES ($1, $2, $3, $4)
                ON CONFLICT DO NOTHING
                RETURNING *`,
-              [job.project_id, 'roadmap', 'artifacts/ROADMAP.md', JSON.stringify(roadmapContent)]
+              [job.project_id, 'roadmap', 'docs/ROADMAP.md', JSON.stringify(roadmapContent)]
             );
             
             // If artifact already exists, update it
@@ -1393,7 +1349,7 @@ async function processJob(jobId: string) {
                 `UPDATE artifacts 
                  SET content = $1, path = $2 
                  WHERE project_id = $3 AND type = 'roadmap'`,
-                [JSON.stringify(roadmapContent), 'artifacts/ROADMAP.md', job.project_id]
+                [JSON.stringify(roadmapContent), 'docs/ROADMAP.md', job.project_id]
               );
             }
             
