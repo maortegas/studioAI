@@ -2,6 +2,8 @@ export type ProgrammerType = 'backend' | 'frontend' | 'fullstack';
 
 export type CodingSessionStatus = 'pending' | 'generating_tests' | 'tests_generated' | 'running' | 'completed' | 'failed' | 'paused';
 
+export type TestStrategy = 'tdd' | 'after' | 'none'; // TDD: tests before coding, after: unit tests after coding, none: no testing
+
 export interface CodingSession {
   id: string;
   project_id: string;
@@ -47,8 +49,6 @@ export interface CodingSessionEvent {
   };
   timestamp: Date;
 }
-
-export type TestStrategy = 'tdd' | 'after' | 'none'; // TDD: tests before coding, after: unit tests after coding, none: no testing
 
 export interface StartImplementationRequest {
   project_id: string;

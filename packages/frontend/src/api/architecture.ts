@@ -19,7 +19,7 @@ export const architectureApi = {
     formData.append('file', file);
     formData.append('project_id', projectId);
     formData.append('type', 'architecture');
-    formData.append('path', `artifacts/ARCHITECTURE.${file.name.split('.').pop()}`);
+    formData.append('path', `docs/ARCHITECTURE.${file.name.split('.').pop()}`);
 
     const response = await apiClient.post('/artifacts', formData, {
       headers: {

@@ -2,6 +2,7 @@ import { ArtifactRepository } from '../repositories/artifactRepository';
 import { CreateArtifactRequest, Artifact, ArtifactType } from '@devflow-studio/shared';
 import { createFile, readFile, validatePath } from '../utils/fileSystem';
 import path from 'path';
+import * as fs from 'fs/promises';
 import { ProjectRepository } from '../repositories/projectRepository';
 
 export class ArtifactService {
@@ -14,7 +15,38 @@ export class ArtifactService {
   }
 
   async getArtifactsByProject(projectId: string): Promise<Artifact[]> {
-    return await this.artifactRepo.findByProjectId(projectId);
+    const artifacts = await this.artifactRepo.findByProjectId(projectId);
+    
+    // Check if ARCHITECTURE.md file exists in filesystem but not in database
+    const hasArchitectureArtifact = artifacts.some(a => a.type === 'architecture');
+    if (!hasArchitectureArtifact) {
+      try {
+        const project = await this.projectRepo.findById(projectId);
+        if (project) {
+          const architecturePath = path.join(project.base_path, 'docs', 'ARCHITECTURE.md');
+          try {
+            const content = await fs.readFile(architecturePath, 'utf8');
+            // File exists but no database record - create the artifact record
+            const artifact = await this.artifactRepo.create({
+              project_id: projectId,
+              type: 'architecture',
+              path: architecturePath,
+              content: { content },
+            });
+            artifacts.push(artifact);
+          } catch (fileError: any) {
+            // File doesn't exist, that's okay
+            if (fileError.code !== 'ENOENT') {
+              console.error('Error checking for architecture file:', fileError);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking for architecture file in filesystem:', error);
+      }
+    }
+    
+    return artifacts;
   }
 
   async getArtifactById(id: string): Promise<Artifact | null> {
@@ -31,7 +63,7 @@ export class ArtifactService {
       throw new Error('Project not found');
     }
 
-    const filePath = path.join(project.base_path, 'artifacts', 'PRD.md');
+    const filePath = path.join(project.base_path, 'docs', 'PRD.md');
     
     if (!validatePath(filePath, project.base_path)) {
       throw new Error('Invalid file path');
@@ -63,7 +95,7 @@ export class ArtifactService {
       throw new Error('Project not found');
     }
 
-    const filePath = path.join(project.base_path, 'artifacts', 'ARCHITECTURE.md');
+    const filePath = path.join(project.base_path, 'docs', 'ARCHITECTURE.md');
     
     if (!validatePath(filePath, project.base_path)) {
       throw new Error('Invalid file path');
@@ -134,7 +166,7 @@ export class ArtifactService {
     }
 
     const fileName = `ADR-${adrNum.toString().padStart(3, '0')}.md`;
-    const filePath = path.join(project.base_path, 'artifacts', 'adr', fileName);
+    const filePath = path.join(project.base_path, 'docs', 'adr', fileName);
     
     if (!validatePath(filePath, project.base_path)) {
       throw new Error('Invalid file path');

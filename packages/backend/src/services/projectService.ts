@@ -29,7 +29,7 @@ export class ProjectService {
     await ensureDirectory(data.base_path);
 
     // Create initial files
-    const prdPath = path.join(data.base_path, 'artifacts', 'PRD.md');
+    const prdPath = path.join(data.base_path, 'docs', 'PRD.md');
     const contextPackPath = path.join(data.base_path, 'CONTEXT_PACK.md');
     const cursorRulesPath = path.join(data.base_path, '.cursor', 'rules', 'devflow.md');
     const claudePath = path.join(data.base_path, 'CLAUDE.md');

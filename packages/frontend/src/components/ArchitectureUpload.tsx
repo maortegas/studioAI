@@ -32,7 +32,7 @@ export default function ArchitectureUpload({ projectId, onUploaded }: Architectu
         {
           project_id: projectId,
           type: 'architecture' as ArtifactType,
-          path: `artifacts/ARCHITECTURE.${file.name.split('.').pop()}`,
+          path: `docs/ARCHITECTURE.${file.name.split('.').pop()}`,
           content: {},
         },
         file

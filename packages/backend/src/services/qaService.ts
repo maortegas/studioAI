@@ -300,12 +300,12 @@ export class QAService {
       // Save report to file
       const project = await this.projectRepo.findById(session.project_id);
       if (project) {
-        const reportPath = path.join(project.base_path, 'artifacts', `QA_REPORT_${sessionId}.json`);
+        const reportPath = path.join(project.base_path, 'docs', `QA_REPORT_${sessionId}.json`);
         await fs.mkdir(path.dirname(reportPath), { recursive: true });
         await fs.writeFile(reportPath, JSON.stringify(qaData, null, 2), 'utf8');
         
         await this.qaRepo.update(sessionId, {
-          report_path: `artifacts/QA_REPORT_${sessionId}.json`,
+          report_path: `docs/QA_REPORT_${sessionId}.json`,
         });
       }
     } catch (error: any) {
@@ -372,7 +372,7 @@ export class QAService {
       throw new Error('Project not found');
     }
 
-    const testDir = path.join(project.base_path, 'artifacts', `TESTS_${sessionId}`);
+    const testDir = path.join(project.base_path, 'docs', `TESTS_${sessionId}`);
     
     try {
       const files = await fs.readdir(testDir);
@@ -384,7 +384,7 @@ export class QAService {
           const stats = await fs.stat(filePath);
           testFiles.push({
             name: file,
-            path: `artifacts/TESTS_${sessionId}/${file}`,
+            path: `docs/TESTS_${sessionId}/${file}`,
             size: stats.size,
           });
         }
@@ -415,10 +415,10 @@ export class QAService {
 
     // Sanitize filename to prevent path traversal
     const sanitizedFileName = path.basename(fileName);
-    const testFilePath = path.join(project.base_path, 'artifacts', `TESTS_${sessionId}`, sanitizedFileName);
+    const testFilePath = path.join(project.base_path, 'docs', `TESTS_${sessionId}`, sanitizedFileName);
 
     // Verify the file is in the test directory
-    const testDir = path.join(project.base_path, 'artifacts', `TESTS_${sessionId}`);
+    const testDir = path.join(project.base_path, 'docs', `TESTS_${sessionId}`);
     if (!testFilePath.startsWith(testDir)) {
       throw new Error('Invalid file path');
     }
@@ -450,10 +450,10 @@ export class QAService {
 
     // Sanitize filename to prevent path traversal
     const sanitizedFileName = path.basename(fileName);
-    const testFilePath = path.join(project.base_path, 'artifacts', `TESTS_${sessionId}`, sanitizedFileName);
+    const testFilePath = path.join(project.base_path, 'docs', `TESTS_${sessionId}`, sanitizedFileName);
 
     // Verify the file is in the test directory
-    const testDir = path.join(project.base_path, 'artifacts', `TESTS_${sessionId}`);
+    const testDir = path.join(project.base_path, 'docs', `TESTS_${sessionId}`);
     if (!testFilePath.startsWith(testDir)) {
       throw new Error('Invalid file path');
     }
@@ -486,10 +486,10 @@ export class QAService {
 
     // Sanitize filename to prevent path traversal
     const sanitizedFileName = path.basename(fileName);
-    const testFilePath = path.join(project.base_path, 'artifacts', `TESTS_${sessionId}`, sanitizedFileName);
+    const testFilePath = path.join(project.base_path, 'docs', `TESTS_${sessionId}`, sanitizedFileName);
 
     // Verify the file is in the test directory
-    const testDir = path.join(project.base_path, 'artifacts', `TESTS_${sessionId}`);
+    const testDir = path.join(project.base_path, 'docs', `TESTS_${sessionId}`);
     if (!testFilePath.startsWith(testDir)) {
       throw new Error('Invalid file path');
     }
@@ -516,7 +516,7 @@ export class QAService {
    * Rebuild consolidated test file from individual test files
    */
   private async updateConsolidatedTestFile(sessionId: string, projectBasePath: string): Promise<void> {
-    const testDir = path.join(projectBasePath, 'artifacts', `TESTS_${sessionId}`);
+    const testDir = path.join(projectBasePath, 'docs', `TESTS_${sessionId}`);
     const consolidatedPath = path.join(testDir, 'all_tests.js');
 
     try {
