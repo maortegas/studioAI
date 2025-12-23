@@ -15,6 +15,12 @@ import qaRouter from './routes/qa';
 import testSuitesRouter from './routes/test-suites';
 import releasesRouter from './routes/releases';
 import integrationTestPlansRouter from './routes/integration-test-plans';
+import prdRouter from './routes/prd';
+import userStoriesRouter from './routes/user-stories';
+import rfcRouter from './routes/rfc';
+import breakdownRouter from './routes/breakdown';
+import designRouter from './routes/design';
+import reviewRouter from './routes/review';
 import { validateProjectPath } from './middleware/validation';
 import { auditLog } from './middleware/audit';
 
@@ -27,6 +33,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(auditLog);
+
+// Serve uploaded files
+app.use('/uploads', express.static('uploads'));
 
 // Routes
 app.use('/api/projects', validateProjectPath, projectsRouter);
@@ -42,6 +51,12 @@ app.use('/api/qa', qaRouter);
 app.use('/api/test-suites', testSuitesRouter);
 app.use('/api/releases', releasesRouter);
 app.use('/api/integration-test-plans', integrationTestPlansRouter);
+app.use('/api/prd', prdRouter);
+app.use('/api/user-stories', userStoriesRouter);
+app.use('/api/rfc', rfcRouter);
+app.use('/api/breakdown', breakdownRouter);
+app.use('/api/design', designRouter);
+app.use('/api/review', reviewRouter);
 
 // Health check
 app.get('/health', (req, res) => {

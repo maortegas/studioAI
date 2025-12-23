@@ -5,6 +5,7 @@ import { ClaudeCLI } from './cli/claude';
 import { AIProvider, AIMode, AIJobStatus } from '@devflow-studio/shared';
 import path from 'path';
 import fs from 'fs/promises';
+import express from 'express';
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -53,6 +54,221 @@ class AIJobRepositoryImpl {
 }
 
 const jobRepo = new AIJobRepositoryImpl();
+
+/**
+ * Parse errors into actionable items with context
+ */
+async function parseErrorsIntoActionableItems(
+  errors: string[],
+  installOutput: string,
+  buildOutput: string,
+  testOutput: string,
+  projectType: string,
+  projectBasePath?: string
+): Promise<any[]> {
+  const actionableItems: any[] = [];
+  
+  // Group errors by type and extract context
+  for (let i = 0; i < errors.length; i++) {
+    const error = errors[i];
+    
+    // Try to extract file path, line number, and error message
+    // Improved regex to capture full file paths including directories
+    // Pattern 1: /path/to/file.js:line:column or /path/to/file.js:line
+    const fileMatch1 = error.match(/((?:[\/\\]?[\w\-\.\/\\]+)+\.(?:ts|js|tsx|jsx|py|java|go|rs|jsx|tsx))(?::(\d+))?(?::(\d+))?/);
+    // Pattern 2: file.js:line:column or file.js:line
+    const fileMatch2 = error.match(/([\w\-\.\/\\]+\.(?:ts|js|tsx|jsx|py|java|go|rs))(?::(\d+))?(?::(\d+))?/);
+    // Pattern 3: at /path/to/file.js:line:column
+    const fileMatch3 = error.match(/at\s+((?:[\/\\]?[\w\-\.\/\\]+)+\.(?:ts|js|tsx|jsx|py|java|go|rs))(?::(\d+))?(?::(\d+))?/);
+    // Pattern 4: in /path/to/file.js:line
+    const fileMatch4 = error.match(/in\s+((?:[\/\\]?[\w\-\.\/\\]+)+\.(?:ts|js|tsx|jsx|py|java|go|rs))(?::(\d+))?/);
+    // Pattern 5: line number only
+    const lineMatch = error.match(/line\s+(\d+)/i);
+    const errorTypeMatch = error.match(/(TypeError|ReferenceError|SyntaxError|ImportError|ModuleNotFoundError|CompilationError)/i);
+    
+    let filePath = null;
+    let lineNumber = null;
+    let errorType = 'unknown';
+    
+    // Try patterns in order of specificity
+    if (fileMatch1) {
+      filePath = fileMatch1[1];
+      lineNumber = fileMatch1[2] ? parseInt(fileMatch1[2]) : (fileMatch1[3] ? parseInt(fileMatch1[3]) : null);
+    } else if (fileMatch3) {
+      filePath = fileMatch3[1];
+      lineNumber = fileMatch3[2] ? parseInt(fileMatch3[2]) : (fileMatch3[3] ? parseInt(fileMatch3[3]) : null);
+    } else if (fileMatch4) {
+      filePath = fileMatch4[1];
+      lineNumber = fileMatch4[2] ? parseInt(fileMatch4[2]) : null;
+    } else if (fileMatch2) {
+      filePath = fileMatch2[1];
+      lineNumber = fileMatch2[2] ? parseInt(fileMatch2[2]) : (fileMatch2[3] ? parseInt(fileMatch2[3]) : null);
+    } else if (lineMatch) {
+      lineNumber = parseInt(lineMatch[1]);
+    }
+    
+    // Clean up file path - remove leading/trailing spaces and normalize
+    if (filePath) {
+      filePath = filePath.trim();
+      // Remove any duplicate path segments if present
+      if (projectBasePath && filePath.includes(projectBasePath)) {
+        // Extract relative path if absolute path contains base_path
+        const path = require('path');
+        const resolvedBasePath = path.resolve(projectBasePath);
+        if (filePath.includes(resolvedBasePath)) {
+          const lastIndex = filePath.lastIndexOf(resolvedBasePath);
+          if (lastIndex >= 0) {
+            filePath = filePath.substring(lastIndex + resolvedBasePath.length).replace(/^[/\\]+/, '');
+          }
+        }
+      }
+    }
+    
+    if (errorTypeMatch) {
+      errorType = errorTypeMatch[1].toLowerCase();
+    }
+    
+    // Determine category
+    let category = 'other';
+    if (error.includes('import') || error.includes('require') || error.includes('module')) {
+      category = 'dependency';
+    } else if (error.includes('type') || error.includes('Type')) {
+      category = 'type';
+    } else if (error.includes('syntax') || error.includes('Syntax')) {
+      category = 'syntax';
+    } else if (error.includes('test') || error.includes('Test') || error.includes('spec')) {
+      category = 'test';
+    } else if (error.includes('build') || error.includes('compile')) {
+      category = 'build';
+    }
+    
+    // Determine priority
+    let priority = 'medium';
+    if (category === 'syntax' || category === 'build') {
+      priority = 'high';
+    } else if (category === 'test') {
+      priority = 'low';
+    }
+    
+    actionableItems.push({
+      id: `error-${i + 1}`,
+      error_message: error,
+      category,
+      priority,
+      file_path: filePath,
+      line_number: lineNumber,
+      error_type: errorType,
+      suggested_fix: null, // Will be generated when user selects to fix
+      status: 'pending', // pending, fixing, fixed, skipped
+    });
+  }
+  
+  return actionableItems;
+}
+
+/**
+ * Emit project review event (store in review_status for polling)
+ */
+async function emitProjectReviewEvent(projectId: string, event: any) {
+  try {
+    // Get current review status
+    const result = await pool.query(
+      `SELECT review_status FROM projects WHERE id = $1`,
+      [projectId]
+    );
+    
+    if (result.rows.length === 0) return;
+    
+    const currentStatus = result.rows[0].review_status || { status: 'running', output: '' };
+    
+    // Update status with event data
+    const updatedStatus: any = { ...currentStatus };
+    
+    if (event.type === 'progress') {
+      updatedStatus.current_step = event.step;
+      updatedStatus.progress = event.progress;
+      updatedStatus.build_status = event.build_status || updatedStatus.build_status;
+      updatedStatus.test_status = event.test_status || updatedStatus.test_status;
+      updatedStatus.iterations = event.iterations || updatedStatus.iterations;
+    } else if (event.type === 'output') {
+      updatedStatus.output = (updatedStatus.output || '') + (event.content || '');
+    } else if (event.type === 'error') {
+      updatedStatus.errors = [...(updatedStatus.errors || []), event.message];
+    } else if (event.type === 'completed') {
+      updatedStatus.status = 'completed';
+      updatedStatus.progress = 100;
+    } else if (event.type === 'failed') {
+      updatedStatus.status = 'failed';
+    }
+    
+    // Update in database
+    await pool.query(
+      `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(updatedStatus), projectId]
+    );
+    
+    console.log(`[Worker] Project review event for ${projectId}:`, event.type);
+  } catch (error) {
+    console.error(`[Worker] Error emitting project review event:`, error);
+  }
+}
+
+/**
+ * Update breakdown task status to 'done' when coding session completes
+ */
+async function updateBreakdownTaskStatus(codingSessionId: string) {
+  try {
+    console.log(`[Worker] Attempting to update breakdown task status for coding session ${codingSessionId}`);
+    
+    // Get the story_id (which is the task_id) from the coding session
+    const sessionResult = await pool.query(
+      'SELECT story_id FROM coding_sessions WHERE id = $1',
+      [codingSessionId]
+    );
+    
+    if (sessionResult.rows.length === 0) {
+      console.warn(`[Worker] Coding session ${codingSessionId} not found for task status update`);
+      return;
+    }
+    
+    const taskId = sessionResult.rows[0].story_id;
+    console.log(`[Worker] Found task_id ${taskId} for coding session ${codingSessionId}`);
+    
+    // Verify it's a breakdown task (type = 'task' and has epic_id)
+    const taskResult = await pool.query(
+      'SELECT id, type, epic_id, status, title FROM tasks WHERE id = $1',
+      [taskId]
+    );
+    
+    if (taskResult.rows.length === 0) {
+      console.warn(`[Worker] Task ${taskId} not found for status update`);
+      return;
+    }
+    
+    const task = taskResult.rows[0];
+    console.log(`[Worker] Task details: id=${task.id}, type=${task.type}, epic_id=${task.epic_id}, current_status=${task.status}, title=${task.title}`);
+    
+    // Only update if it's a breakdown task (type = 'task' and has epic_id)
+    if (task.type === 'task' && task.epic_id) {
+      const updateResult = await pool.query(
+        'UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, status',
+        ['done', taskId]
+      );
+      
+      if (updateResult.rows.length > 0) {
+        console.log(`[Worker] ✅ Successfully updated breakdown task ${taskId} (${task.title}) status from '${task.status}' to 'done' after coding session ${codingSessionId} completed`);
+      } else {
+        console.warn(`[Worker] ⚠️ Update query returned no rows for task ${taskId}`);
+      }
+    } else {
+      console.log(`[Worker] ⏭️ Task ${taskId} is not a breakdown task (type: ${task.type}, epic_id: ${task.epic_id}), skipping status update`);
+    }
+  } catch (error: any) {
+    console.error(`[Worker] ❌ Error updating breakdown task status for session ${codingSessionId}:`, error);
+    console.error(`[Worker] Error details:`, error.message, error.stack);
+    // Don't throw - this is a side effect, shouldn't fail the main process
+  }
+}
 
 async function processJob(jobId: string) {
   const job = await jobRepo.findById(jobId);
@@ -103,14 +319,42 @@ async function processJob(jobId: string) {
 
     // Check if this is a coding session job
     const codingSessionId = job.args.coding_session_id;
-    const phase = job.args.phase; // 'test_generation', 'test_generation_after', or 'implementation'
+    const phase = job.args.phase; // 'test_generation', 'test_generation_after', 'implementation', or 'story_generation'
     const isCodingSession = mode === 'agent' && codingSessionId;
     const isTestGeneration = isCodingSession && (phase === 'test_generation' || phase === 'test_generation_after');
     const isImplementation = isCodingSession && phase === 'implementation';
     
+    // Check if this is a story generation job
+    const prdId = job.args.prd_id;
+    const isStoryGeneration = mode === 'agent' && phase === 'story_generation' && prdId;
+    
+    // Check if this is an RFC generation job
+    const rfcId = job.args.rfc_id;
+    const isRFCGeneration = mode === 'agent' && phase === 'rfc_generation';
+    
+    // Check if this is a breakdown generation job
+    const isBreakdownGeneration = mode === 'agent' && phase === 'breakdown_generation';
+    
+    // Check if this is a user flow generation job
+    const userFlowId = job.args.user_flow_id;
+    const isUserFlowGeneration = mode === 'agent' && phase === 'user_flow_generation';
+    
+    // Check if this is a prototype analysis job
+    const prototypeId = job.args.prototype_id;
+    const isPrototypeAnalysis = mode === 'agent' && phase === 'prototype_analysis';
+    
     // Check if this is a QA session job
     const qaSessionId = job.args.qa_session_id;
     const isQASession = mode === 'agent' && qaSessionId;
+    
+    // Check if this is a code review job (for individual sessions)
+    const isCodeReview = mode === 'review' && phase === 'code_review' && codingSessionId;
+    
+    // Check if this is a project-wide review job
+    const isProjectReview = mode === 'review' && phase === 'project_review' && job.project_id;
+    
+    // Check if this is a project review fix job (fixing selected errors)
+    const isProjectReviewFix = mode === 'agent' && phase === 'project_review_fix' && job.project_id;
 
     // Check if coding session is paused
     if (isCodingSession) {
@@ -297,8 +541,9 @@ async function processJob(jobId: string) {
       console.log(`[Worker] Error: ${result.error.substring(0, 500)}`);
     }
 
-    // Update status
-    if (result.success) {
+    // Update status - also process if we have output even if success is false
+    // (sometimes CLI returns success=false but still has useful output)
+    if (result.success || (result.output && result.output.length > 0 && !result.error)) {
       await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
       await jobRepo.addEvent(jobId, 'completed', { output: result.output });
       
@@ -340,6 +585,9 @@ async function processJob(jobId: string) {
               );
               
               console.log(`[Worker] Generated ${testSuites.length} unit test suites for coding session ${codingSessionId} (after implementation)`);
+              
+              // Update breakdown task status to 'done'
+              await updateBreakdownTaskStatus(codingSessionId);
               
               // Automatically execute test suites
               try {
@@ -467,6 +715,9 @@ async function processJob(jobId: string) {
             );
             console.log(`[Worker] Coding session ${codingSessionId} completed (no testing)`);
             
+            // Update breakdown task status to 'done'
+            await updateBreakdownTaskStatus(codingSessionId);
+            
             // Automatically trigger QA session (but skip test execution)
             try {
               const codingSession = await pool.query(
@@ -531,6 +782,9 @@ async function processJob(jobId: string) {
               [codingSessionId, 'completed', JSON.stringify({ message: 'Implementation completed successfully' })]
             );
             console.log(`[Worker] Coding session ${codingSessionId} completed`);
+            
+            // Update breakdown task status to 'done'
+            await updateBreakdownTaskStatus(codingSessionId);
             
             // Automatically execute test suites for this coding session
             try {
@@ -601,6 +855,1634 @@ async function processJob(jobId: string) {
       
       // Note: Architecture is saved manually by the user after reviewing the generated content
       // Auto-save removed to prevent duplicate files and allow user review before saving
+      
+      // Process Code Review results
+      if (isCodeReview) {
+        console.log(`[Worker] Processing code review for coding session ${codingSessionId}`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        
+        try {
+          const reviewIteration = job.args.review_iteration || 0;
+          const maxIterations = 10; // Maximum iterations to prevent infinite loops
+          
+          if (reviewIteration >= maxIterations) {
+            console.error(`[Worker] Review reached maximum iterations (${maxIterations}), stopping`);
+            await pool.query(
+              'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+              ['failed', 'Review process reached maximum iterations', codingSessionId]
+            );
+            await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
+            return;
+          }
+
+          // Get project path
+          const projectResult = await pool.query(
+            'SELECT base_path, tech_stack FROM projects WHERE id = $1',
+            [job.project_id]
+          );
+          
+          if (projectResult.rows.length === 0) {
+            throw new Error('Project not found');
+          }
+          
+          const projectPath = projectResult.rows[0].base_path;
+          
+          // Helper function to execute command and detect errors
+          const executeCommand = async (command: string, args: string[] = []): Promise<{ success: boolean; output: string; errors: string[]; exitCode: number }> => {
+            return new Promise((resolve) => {
+              const { spawn } = require('child_process');
+              const childProcess = spawn(command, args, {
+                cwd: projectPath,
+                shell: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              });
+
+              let output = '';
+              let errorOutput = '';
+
+              childProcess.stdout.on('data', (data: Buffer) => {
+                output += data.toString();
+              });
+
+              childProcess.stderr.on('data', (data: Buffer) => {
+                errorOutput += data.toString();
+              });
+
+              childProcess.on('close', (code: number) => {
+                const errors: string[] = [];
+                
+                if (code !== 0) {
+                  errors.push(`Command failed with exit code ${code}`);
+                }
+
+                if (errorOutput) {
+                  const errorLines = errorOutput.split('\n').filter((line: string) => 
+                    line.trim() && 
+                    !line.includes('warning') && 
+                    !line.includes('WARNING')
+                  );
+                  errors.push(...errorLines);
+                }
+
+                const errorPatterns = [
+                  /error:/gi, /Error:/g, /ERROR:/g, /failed/gi, /Failed/gi, /FAILED/gi,
+                  /exception/gi, /Exception/gi, /TypeError/gi, /ReferenceError/gi, /SyntaxError/gi,
+                ];
+
+                const outputLines = output.split('\n');
+                for (const line of outputLines) {
+                  for (const pattern of errorPatterns) {
+                    if (pattern.test(line) && !line.includes('warning')) {
+                      errors.push(line.trim());
+                      break;
+                    }
+                  }
+                }
+
+                resolve({
+                  success: code === 0 && errors.length === 0,
+                  output: output + errorOutput,
+                  errors: [...new Set(errors)],
+                  exitCode: code || 0,
+                });
+              });
+
+              childProcess.on('error', (error: Error) => {
+                resolve({
+                  success: false,
+                  output: errorOutput,
+                  errors: [error.message],
+                  exitCode: -1,
+                });
+              });
+            });
+          };
+
+          // Detect project type and get commands
+          const fs = require('fs/promises');
+          const path = require('path');
+          
+          let projectType = { type: 'unknown', buildCommand: undefined, testCommand: undefined };
+          
+          // Check for package.json (Node.js/TypeScript)
+          try {
+            const packageJsonPath = path.join(projectPath, 'package.json');
+            await fs.access(packageJsonPath);
+            const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+            projectType = {
+              type: 'node',
+              buildCommand: packageJson.scripts?.build ? ['npm', 'run', 'build'] : undefined,
+              testCommand: packageJson.scripts?.test ? ['npm', 'test'] : undefined,
+            };
+          } catch {
+            // Check for requirements.txt (Python)
+            try {
+              await fs.access(path.join(projectPath, 'requirements.txt'));
+              projectType = {
+                type: 'python',
+                testCommand: ['python', '-m', 'pytest'],
+              };
+            } catch {
+              // Check for pom.xml (Java)
+              try {
+                await fs.access(path.join(projectPath, 'pom.xml'));
+                projectType = {
+                  type: 'java',
+                  buildCommand: ['mvn', 'compile'],
+                  testCommand: ['mvn', 'test'],
+                };
+              } catch {
+                // Unknown type
+              }
+            }
+          }
+          
+          console.log(`[Worker] Detected project type: ${projectType.type}`);
+          
+          // Execute build command if available
+          let buildResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          if (projectType.buildCommand) {
+            console.log(`[Worker] Executing build command: ${projectType.buildCommand.join(' ')}`);
+            
+            // Emit output event
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: `Building project: ${projectType.buildCommand.join(' ')}\n`,
+            });
+            
+            buildResult = await executeCommand(
+              projectType.buildCommand[0],
+              projectType.buildCommand.slice(1)
+            );
+            
+            // Emit output with results
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: buildResult.output + '\n',
+            });
+            
+            console.log(`[Worker] Build result: success=${buildResult.success}, errors=${buildResult.errors.length}`);
+          }
+          
+          // Execute test command if available
+          let testResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          if (projectType.testCommand) {
+            console.log(`[Worker] Executing test command: ${projectType.testCommand.join(' ')}`);
+            
+            // Emit output event
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: `Running tests: ${projectType.testCommand.join(' ')}\n`,
+            });
+            
+            testResult = await executeCommand(
+              projectType.testCommand[0],
+              projectType.testCommand.slice(1)
+            );
+            
+            // Emit output with results
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: testResult.output + '\n',
+            });
+            
+            console.log(`[Worker] Test result: success=${testResult.success}, errors=${testResult.errors.length}`);
+          }
+          
+          // Collect all errors (include install errors for project review)
+          const allErrors = [...installResult.errors, ...buildResult.errors, ...testResult.errors];
+          const hasErrors = !installResult.success || !buildResult.success || !testResult.success || allErrors.length > 0;
+          
+          if (hasErrors) {
+            console.log(`[Worker] Found ${allErrors.length} errors, creating fix job`);
+            
+            // Build fix prompt with error details
+            const fixPrompt = `# Fix Project Errors
+
+## Errors Found
+
+${allErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}
+
+## Install Output
+\`\`\`
+${installResult.output.substring(0, 2000)}
+\`\`\`
+
+## Build Output
+\`\`\`
+${buildResult.output.substring(0, 2000)}
+\`\`\`
+
+## Test Output
+\`\`\`
+${testResult.output.substring(0, 2000)}
+\`\`\`
+
+## Instructions
+
+1. Review ALL errors above
+2. Fix each error in the codebase systematically
+3. Ensure fixes don't break other parts of the project
+4. Re-run install, build, and tests after fixes
+
+Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
+
+            // Create new AI job to fix errors
+            const fixJob = await pool.query(
+              `INSERT INTO ai_jobs (project_id, provider, command, args, status)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING *`,
+              [
+                job.project_id,
+                'cursor',
+                'cursor',
+                JSON.stringify({
+                  mode: 'agent',
+                  prompt: fixPrompt,
+                  project_path: projectPath,
+                  coding_session_id: codingSessionId,
+                  phase: 'code_review',
+                  review_iteration: reviewIteration + 1,
+                }),
+                'pending'
+              ]
+            );
+            
+            console.log(`[Worker] Created fix job ${fixJob.rows[0].id} for iteration ${reviewIteration + 1}`);
+            
+            // Update session status
+            await pool.query(
+              'UPDATE coding_sessions SET status = $1 WHERE id = $2',
+              ['reviewing', codingSessionId]
+            );
+            
+            // Mark current job as completed (it will trigger the fix job)
+            await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
+          } else {
+            // No errors found, review is complete
+            console.log(`[Worker] ✅ Review complete! No errors found after ${reviewIteration} iterations`);
+            
+            await pool.query(
+              'UPDATE coding_sessions SET status = $1, completed_at = $2 WHERE id = $3',
+              ['completed', new Date(), codingSessionId]
+            );
+            
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'completed', JSON.stringify({ 
+                message: 'Review completed successfully. All errors fixed.',
+                iterations: reviewIteration + 1
+              })]
+            );
+            
+            // Update breakdown task status
+            await updateBreakdownTaskStatus(codingSessionId);
+            
+            await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
+          }
+        } catch (error: any) {
+          console.error('[Worker] Error processing code review:', error);
+          await pool.query(
+            'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+            ['failed', error.message, codingSessionId]
+          );
+          await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
+        }
+      }
+      
+      // Process Project Review results
+      if (isProjectReview) {
+        console.log(`[Worker] Processing project review for project ${job.project_id}`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        
+        try {
+          const reviewIteration = job.args.review_iteration || 0;
+          const maxIterations = 15; // Maximum iterations for project review
+          
+          if (reviewIteration >= maxIterations) {
+            console.error(`[Worker] Project review reached maximum iterations (${maxIterations}), stopping`);
+            await pool.query(
+              `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+              [JSON.stringify({ status: 'failed', errors: ['Maximum iterations reached'] }), job.project_id]
+            );
+            await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
+            return;
+          }
+
+          // Get project path
+          const projectResult = await pool.query(
+            'SELECT base_path, tech_stack FROM projects WHERE id = $1',
+            [job.project_id]
+          );
+          
+          if (projectResult.rows.length === 0) {
+            throw new Error('Project not found');
+          }
+          
+          const projectPath = projectResult.rows[0].base_path;
+          
+          // Helper function to execute command and detect errors (same as code review)
+          const executeCommand = async (command: string, args: string[] = []): Promise<{ success: boolean; output: string; errors: string[]; exitCode: number }> => {
+            return new Promise((resolve) => {
+              const { spawn } = require('child_process');
+              const childProcess = spawn(command, args, {
+                cwd: projectPath,
+                shell: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              });
+
+              let output = '';
+              let errorOutput = '';
+
+              childProcess.stdout.on('data', (data: Buffer) => {
+                output += data.toString();
+              });
+
+              childProcess.stderr.on('data', (data: Buffer) => {
+                errorOutput += data.toString();
+              });
+
+              childProcess.on('close', (code: number) => {
+                const errors: string[] = [];
+                
+                if (code !== 0) {
+                  errors.push(`Command failed with exit code ${code}`);
+                }
+
+                if (errorOutput) {
+                  const errorLines = errorOutput.split('\n').filter((line: string) => 
+                    line.trim() && 
+                    !line.includes('warning') && 
+                    !line.includes('WARNING')
+                  );
+                  errors.push(...errorLines);
+                }
+
+                const errorPatterns = [
+                  /error:/gi, /Error:/g, /ERROR:/g, /failed/gi, /Failed/gi, /FAILED/gi,
+                  /exception/gi, /Exception/gi, /TypeError/gi, /ReferenceError/gi, /SyntaxError/gi,
+                ];
+
+                const outputLines = output.split('\n');
+                for (const line of outputLines) {
+                  for (const pattern of errorPatterns) {
+                    if (pattern.test(line) && !line.includes('warning')) {
+                      errors.push(line.trim());
+                      break;
+                    }
+                  }
+                }
+
+                resolve({
+                  success: code === 0 && errors.length === 0,
+                  output: output + errorOutput,
+                  errors: [...new Set(errors)],
+                  exitCode: code || 0,
+                });
+              });
+
+              childProcess.on('error', (error: Error) => {
+                resolve({
+                  success: false,
+                  output: errorOutput,
+                  errors: [error.message],
+                  exitCode: -1,
+                });
+              });
+            });
+          };
+
+          // Detect project type and get commands
+          const fs = require('fs/promises');
+          const path = require('path');
+          
+          let projectType = { type: 'unknown', buildCommand: undefined, testCommand: undefined, installCommand: undefined };
+          
+          // Check for package.json (Node.js/TypeScript)
+          try {
+            const packageJsonPath = path.join(projectPath, 'package.json');
+            await fs.access(packageJsonPath);
+            const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+            projectType = {
+              type: 'node',
+              installCommand: ['npm', 'install'],
+              buildCommand: packageJson.scripts?.build ? ['npm', 'run', 'build'] : undefined,
+              testCommand: packageJson.scripts?.test ? ['npm', 'test'] : undefined,
+            };
+          } catch {
+            // Check for requirements.txt (Python)
+            try {
+              await fs.access(path.join(projectPath, 'requirements.txt'));
+              projectType = {
+                type: 'python',
+                installCommand: ['pip', 'install', '-r', 'requirements.txt'],
+                testCommand: ['python', '-m', 'pytest'],
+              };
+            } catch {
+              // Check for pom.xml (Java)
+              try {
+                await fs.access(path.join(projectPath, 'pom.xml'));
+                projectType = {
+                  type: 'java',
+                  buildCommand: ['mvn', 'clean', 'install'],
+                  testCommand: ['mvn', 'test'],
+                };
+              } catch {
+                // Unknown type
+              }
+            }
+          }
+          
+          console.log(`[Worker] Detected project type: ${projectType.type}`);
+          
+          // Emit progress event and update status: Installing dependencies
+          await emitProjectReviewEvent(job.project_id, {
+            type: 'progress',
+            step: 'Installing dependencies',
+            progress: 10,
+            iterations: reviewIteration,
+          });
+          
+          await pool.query(
+            `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+            [JSON.stringify({
+              status: 'running',
+              current_step: 'Installing dependencies',
+              progress: 10,
+              iterations: reviewIteration,
+            }), job.project_id]
+          );
+          
+          // Install dependencies if needed
+          let installResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          if (projectType.installCommand) {
+            console.log(`[Worker] Installing dependencies: ${projectType.installCommand.join(' ')}`);
+            
+            // Emit output event
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: `Installing dependencies: ${projectType.installCommand.join(' ')}\n`,
+            });
+            
+            installResult = await executeCommand(
+              projectType.installCommand[0],
+              projectType.installCommand.slice(1)
+            );
+            
+            // Emit output with results
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: installResult.output + '\n',
+            });
+            
+            console.log(`[Worker] Install result: success=${installResult.success}, errors=${installResult.errors.length}`);
+          }
+          
+          // Emit progress event and update status: Building
+          await emitProjectReviewEvent(job.project_id, {
+            type: 'progress',
+            step: 'Building project',
+            progress: 30,
+            build_status: 'running',
+            iterations: reviewIteration,
+          });
+          
+          await pool.query(
+            `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+            [JSON.stringify({
+              status: 'running',
+              current_step: 'Building project',
+              progress: 30,
+              build_status: 'running',
+              iterations: reviewIteration,
+            }), job.project_id]
+          );
+          
+          // Execute build command if available
+          let buildResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          if (projectType.buildCommand) {
+            console.log(`[Worker] Executing build command: ${projectType.buildCommand.join(' ')}`);
+            
+            // Emit output event
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: `Building project: ${projectType.buildCommand.join(' ')}\n`,
+            });
+            
+            buildResult = await executeCommand(
+              projectType.buildCommand[0],
+              projectType.buildCommand.slice(1)
+            );
+            
+            // Emit output with results
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: buildResult.output + '\n',
+            });
+            
+            console.log(`[Worker] Build result: success=${buildResult.success}, errors=${buildResult.errors.length}`);
+          }
+          
+          // Emit progress event and update status: Running tests
+          await emitProjectReviewEvent(job.project_id, {
+            type: 'progress',
+            step: 'Running tests',
+            progress: 60,
+            build_status: buildResult.success ? 'success' : 'failed',
+            test_status: 'running',
+            iterations: reviewIteration,
+          });
+          
+          await pool.query(
+            `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+            [JSON.stringify({
+              status: 'running',
+              current_step: 'Running tests',
+              progress: 60,
+              build_status: buildResult.success ? 'success' : 'failed',
+              test_status: 'running',
+              iterations: reviewIteration,
+            }), job.project_id]
+          );
+          
+          // Execute test command if available
+          let testResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          if (projectType.testCommand) {
+            console.log(`[Worker] Executing test command: ${projectType.testCommand.join(' ')}`);
+            
+            // Emit output event
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: `Running tests: ${projectType.testCommand.join(' ')}\n`,
+            });
+            
+            testResult = await executeCommand(
+              projectType.testCommand[0],
+              projectType.testCommand.slice(1)
+            );
+            
+            // Emit output with results
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'output',
+              content: testResult.output + '\n',
+            });
+            
+            console.log(`[Worker] Test result: success=${testResult.success}, errors=${testResult.errors.length}`);
+          }
+          
+          // Collect all errors and create actionable items
+          const allErrors = [...installResult.errors, ...buildResult.errors, ...testResult.errors];
+          const hasErrors = !installResult.success || !buildResult.success || !testResult.success || allErrors.length > 0;
+          
+          if (hasErrors) {
+            console.log(`[Worker] Found ${allErrors.length} errors, generating actionable items`);
+            
+            // Parse errors and create actionable items with context
+            const actionableItems = await parseErrorsIntoActionableItems(
+              allErrors,
+              installResult.output,
+              buildResult.output,
+              testResult.output,
+              projectType.type,
+              projectPath
+            );
+            
+            console.log(`[Worker] Generated ${actionableItems.length} actionable items`);
+            console.log(`[Worker] Actionable items:`, JSON.stringify(actionableItems, null, 2));
+            
+            // Update status with actionable items (waiting for user selection)
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'progress',
+              step: 'Errors detected - Review and select items to fix',
+              progress: 80,
+              build_status: buildResult.success ? 'success' : 'failed',
+              test_status: testResult.success ? 'success' : 'failed',
+              iterations: reviewIteration,
+            });
+            
+            const reviewStatusUpdate = {
+              status: 'errors_detected',
+              current_step: 'Review errors and select items to fix',
+              progress: 80,
+              build_status: buildResult.success ? 'success' : 'failed',
+              test_status: testResult.success ? 'success' : 'failed',
+              errors: allErrors,
+              actionable_items: actionableItems,
+              install_output: installResult.output.substring(0, 5000),
+              build_output: buildResult.output.substring(0, 5000),
+              test_output: testResult.output.substring(0, 5000),
+              iterations: reviewIteration,
+            };
+            
+            console.log(`[Worker] Updating review status to errors_detected with ${actionableItems.length} items`);
+            
+            await pool.query(
+              `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+              [JSON.stringify(reviewStatusUpdate), job.project_id]
+            );
+            
+            console.log(`[Worker] ✅ Review status updated successfully`);
+            
+            // Mark current job as completed (no automatic fix)
+            await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
+          } else {
+            // No errors found, review is complete
+            console.log(`[Worker] ✅ Project review complete! No errors found after ${reviewIteration} iterations`);
+            
+            // Emit completed event
+            await emitProjectReviewEvent(job.project_id, {
+              type: 'completed',
+              message: 'Review completed successfully! All errors fixed.',
+            });
+            
+            await pool.query(
+              `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+              [JSON.stringify({
+                status: 'completed',
+                progress: 100,
+                build_status: 'success',
+                test_status: 'success',
+                iterations: reviewIteration + 1,
+              }), job.project_id]
+            );
+            
+            await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
+          }
+        } catch (error: any) {
+          console.error('[Worker] Error processing project review:', error);
+          await pool.query(
+            `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+            [JSON.stringify({ status: 'failed', errors: [error.message] }), job.project_id]
+          );
+          await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
+        }
+      }
+      
+      // Process Project Review Fix results (fixing selected errors)
+      if (isProjectReviewFix) {
+        console.log(`[Worker] Processing project review fix for project ${job.project_id}`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        
+        try {
+          const errorIds = job.args.error_ids || [];
+          const reviewIteration = job.args.review_iteration || 0;
+          
+          // Get current review status
+          const statusResult = await pool.query(
+            `SELECT review_status FROM projects WHERE id = $1`,
+            [job.project_id]
+          );
+          
+          if (statusResult.rows.length === 0) {
+            throw new Error('Project not found');
+          }
+          
+          const currentStatus = statusResult.rows[0].review_status || {};
+          const actionableItems = currentStatus.actionable_items || [];
+          
+          // Mark fixed items as 'fixed'
+          const updatedItems = actionableItems.map((item: any) => {
+            if (errorIds.includes(item.id)) {
+              return { ...item, status: 'fixed' };
+            }
+            return item;
+          });
+          
+          // Update status
+          await pool.query(
+            `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+            [JSON.stringify({
+              ...currentStatus,
+              status: 'running',
+              current_step: 'Re-running review after fixes',
+              progress: 90,
+              actionable_items: updatedItems,
+            }), job.project_id]
+          );
+          
+          // Re-run review to check if errors are fixed
+          const projectResult = await pool.query(
+            'SELECT base_path, tech_stack FROM projects WHERE id = $1',
+            [job.project_id]
+          );
+          
+          if (projectResult.rows.length === 0) {
+            throw new Error('Project not found');
+          }
+          
+          const projectPath = projectResult.rows[0].base_path;
+          
+          // Helper function to execute command (same as before)
+          const executeCommand = async (command: string, args: string[] = []): Promise<{ success: boolean; output: string; errors: string[]; exitCode: number }> => {
+            return new Promise((resolve) => {
+              const { spawn } = require('child_process');
+              const childProcess = spawn(command, args, {
+                cwd: projectPath,
+                shell: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+              });
+
+              let output = '';
+              let errorOutput = '';
+
+              childProcess.stdout.on('data', (data: Buffer) => {
+                output += data.toString();
+              });
+
+              childProcess.stderr.on('data', (data: Buffer) => {
+                errorOutput += data.toString();
+              });
+
+              childProcess.on('close', (code: number) => {
+                const errors: string[] = [];
+                
+                if (code !== 0) {
+                  errors.push(`Command failed with exit code ${code}`);
+                }
+
+                if (errorOutput) {
+                  const errorLines = errorOutput.split('\n').filter((line: string) => 
+                    line.trim() && 
+                    !line.includes('warning') && 
+                    !line.includes('WARNING')
+                  );
+                  errors.push(...errorLines);
+                }
+
+                const errorPatterns = [
+                  /error:/gi, /Error:/g, /ERROR:/g, /failed/gi, /Failed/gi, /FAILED/gi,
+                  /exception/gi, /Exception/gi, /TypeError/gi, /ReferenceError/gi, /SyntaxError/gi,
+                ];
+
+                const outputLines = output.split('\n');
+                for (const line of outputLines) {
+                  for (const pattern of errorPatterns) {
+                    if (pattern.test(line) && !line.includes('warning')) {
+                      errors.push(line.trim());
+                      break;
+                    }
+                  }
+                }
+
+                resolve({
+                  success: code === 0 && errors.length === 0,
+                  output: output + errorOutput,
+                  errors: [...new Set(errors)],
+                  exitCode: code || 0,
+                });
+              });
+
+              childProcess.on('error', (error: Error) => {
+                resolve({
+                  success: false,
+                  output: errorOutput,
+                  errors: [error.message],
+                  exitCode: -1,
+                });
+              });
+            });
+          };
+
+          // Detect project type
+          const fs = require('fs/promises');
+          const path = require('path');
+          
+          let projectType = { type: 'unknown', buildCommand: undefined, testCommand: undefined };
+          
+          try {
+            const packageJsonPath = path.join(projectPath, 'package.json');
+            await fs.access(packageJsonPath);
+            const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+            projectType = {
+              type: 'node',
+              buildCommand: packageJson.scripts?.build ? ['npm', 'run', 'build'] : undefined,
+              testCommand: packageJson.scripts?.test ? ['npm', 'test'] : undefined,
+            };
+          } catch {
+            try {
+              await fs.access(path.join(projectPath, 'requirements.txt'));
+              projectType = {
+                type: 'python',
+                testCommand: ['python', '-m', 'pytest'],
+              };
+            } catch {
+              try {
+                await fs.access(path.join(projectPath, 'pom.xml'));
+                projectType = {
+                  type: 'java',
+                  buildCommand: ['mvn', 'clean', 'install'],
+                  testCommand: ['mvn', 'test'],
+                };
+              } catch {
+                // Unknown type
+              }
+            }
+          }
+          
+          // Re-run build and tests
+          let buildResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          if (projectType.buildCommand) {
+            buildResult = await executeCommand(
+              projectType.buildCommand[0],
+              projectType.buildCommand.slice(1)
+            );
+          }
+          
+          let testResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          if (projectType.testCommand) {
+            testResult = await executeCommand(
+              projectType.testCommand[0],
+              projectType.testCommand.slice(1)
+            );
+          }
+          
+          // Check if there are still errors
+          const remainingErrors = [...buildResult.errors, ...testResult.errors];
+          const hasRemainingErrors = !buildResult.success || !testResult.success || remainingErrors.length > 0;
+          
+          if (hasRemainingErrors) {
+            // Still have errors, update status back to errors_detected
+            const newActionableItems = await parseErrorsIntoActionableItems(
+              remainingErrors,
+              '',
+              buildResult.output,
+              testResult.output,
+              projectType.type,
+              projectPath
+            );
+            
+            await pool.query(
+              `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+              [JSON.stringify({
+                status: 'errors_detected',
+                current_step: 'Review remaining errors',
+                progress: 85,
+                build_status: buildResult.success ? 'success' : 'failed',
+                test_status: testResult.success ? 'success' : 'failed',
+                errors: remainingErrors,
+                actionable_items: [...updatedItems, ...newActionableItems],
+                build_output: buildResult.output.substring(0, 5000),
+                test_output: testResult.output.substring(0, 5000),
+              }), job.project_id]
+            );
+          } else {
+            // All errors fixed!
+            await pool.query(
+              `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+              [JSON.stringify({
+                status: 'completed',
+                progress: 100,
+                build_status: 'success',
+                test_status: 'success',
+                iterations: reviewIteration + 1,
+              }), job.project_id]
+            );
+          }
+          
+          await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
+        } catch (error: any) {
+          console.error('[Worker] Error processing project review fix:', error);
+          await pool.query(
+            `UPDATE projects SET review_status = $1::jsonb WHERE id = $2`,
+            [JSON.stringify({ status: 'failed', errors: [error.message] }), job.project_id]
+          );
+          await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
+        }
+      }
+      
+      // Process Story Generation results
+      if (isStoryGeneration) {
+        console.log(`[Worker] Processing story generation for PRD ${prdId}`);
+        console.log(`[Worker] Job success: ${result.success}`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        console.log(`[Worker] Has error: ${!!result.error}`);
+        
+        if (!result.output || result.output.length === 0) {
+          console.error('[Worker] No output received from AI for story generation');
+          throw new Error('No output received from AI');
+        }
+        
+        try {
+          // Parse stories JSON from AI output
+          let jsonString = '';
+          let jsonMatch: RegExpMatchArray | null = null;
+          
+          // Try pattern 1: ```json ... ``` (most reliable)
+          jsonMatch = result.output.match(/```\s*json\s*([\s\S]*?)\s*```/i);
+          if (jsonMatch && jsonMatch[1]) {
+            jsonString = jsonMatch[1].trim();
+            console.log('[Worker] Found JSON using pattern 1 (json code block)');
+          }
+          
+          // Try pattern 2: ``` ... ``` (code block without json label)
+          if (!jsonString) {
+            jsonMatch = result.output.match(/```\s*([\s\S]*?)\s*```/);
+            if (jsonMatch && jsonMatch[1]) {
+              const candidate = jsonMatch[1].trim();
+              // Check if it looks like JSON (starts with [ or {)
+              if ((candidate.startsWith('[') || candidate.startsWith('{')) && 
+                  (candidate.endsWith(']') || candidate.endsWith('}'))) {
+                jsonString = candidate;
+                console.log('[Worker] Found JSON using pattern 2 (code block without label)');
+              }
+            }
+          }
+          
+          // Try pattern 3: Direct JSON array - find balanced brackets
+          if (!jsonString) {
+            // Look for array starting with [ and find matching closing ]
+            const jsonStart = result.output.indexOf('[');
+            if (jsonStart !== -1) {
+              let bracketCount = 0;
+              let inString = false;
+              let escapeNext = false;
+              let jsonEnd = jsonStart;
+              
+              for (let i = jsonStart; i < result.output.length; i++) {
+                const char = result.output[i];
+                
+                if (escapeNext) {
+                  escapeNext = false;
+                  continue;
+                }
+                
+                if (char === '\\') {
+                  escapeNext = true;
+                  continue;
+                }
+                
+                if (char === '"' && !escapeNext) {
+                  inString = !inString;
+                  continue;
+                }
+                
+                if (!inString) {
+                  if (char === '[') bracketCount++;
+                  if (char === ']') {
+                    bracketCount--;
+                    if (bracketCount === 0) {
+                      jsonEnd = i;
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              if (bracketCount === 0 && jsonEnd > jsonStart) {
+                jsonString = result.output.substring(jsonStart, jsonEnd + 1).trim();
+                console.log('[Worker] Found JSON using pattern 3 (balanced bracket matching)');
+              }
+            }
+          }
+          
+          // Try pattern 4: Look for JSON after common explanatory prefixes (fallback)
+          if (!jsonString) {
+            // Sometimes AI adds text before JSON like "Here is the JSON:" or "The JSON is:"
+            // Look for patterns that might indicate JSON is coming
+            const jsonIndicators = [
+              /json (file|array|data|content|output)/i,
+              /(here|below|following|attached).*json/i,
+              /contains.*user stories/i,
+              /stories? (are|in|below)/i,
+            ];
+            
+            // Find position where JSON likely starts (after explanatory text)
+            let searchStart = 0;
+            for (const indicator of jsonIndicators) {
+              const match = result.output.match(indicator);
+              if (match && match.index !== undefined) {
+                searchStart = Math.max(searchStart, match.index + match[0].length);
+              }
+            }
+            
+            // Now try to find JSON starting from searchStart
+            if (searchStart > 0) {
+              const remainingOutput = result.output.substring(searchStart);
+              const jsonStartInRemaining = remainingOutput.indexOf('[');
+              if (jsonStartInRemaining !== -1) {
+                const actualJsonStart = searchStart + jsonStartInRemaining;
+                let bracketCount = 0;
+                let inString = false;
+                let escapeNext = false;
+                let jsonEnd = actualJsonStart;
+                
+                for (let i = actualJsonStart; i < result.output.length; i++) {
+                  const char = result.output[i];
+                  
+                  if (escapeNext) {
+                    escapeNext = false;
+                    continue;
+                  }
+                  
+                  if (char === '\\') {
+                    escapeNext = true;
+                    continue;
+                  }
+                  
+                  if (char === '"' && !escapeNext) {
+                    inString = !inString;
+                    continue;
+                  }
+                  
+                  if (!inString) {
+                    if (char === '[') bracketCount++;
+                    if (char === ']') {
+                      bracketCount--;
+                      if (bracketCount === 0) {
+                        jsonEnd = i;
+                        break;
+                      }
+                    }
+                  }
+                }
+                
+                if (bracketCount === 0 && jsonEnd > actualJsonStart) {
+                  jsonString = result.output.substring(actualJsonStart, jsonEnd + 1).trim();
+                  console.log('[Worker] Found JSON using pattern 4 (after explanatory text)');
+                }
+              }
+            }
+          }
+          
+          if (!jsonString) {
+            console.error('[Worker] No JSON found. Output preview:', result.output?.substring(0, 500));
+            console.error('[Worker] Full output length:', result.output?.length);
+            // Try one more time: look for ANY array-like structure
+            const lastBracketMatch = result.output.match(/(\[[\s\S]{100,}\])/); // At least 100 chars to be meaningful
+            if (lastBracketMatch) {
+              try {
+                JSON.parse(lastBracketMatch[1]);
+                jsonString = lastBracketMatch[1];
+                console.log('[Worker] Found JSON using pattern 5 (desperate fallback)');
+              } catch (e) {
+                // Still not valid JSON
+              }
+            }
+            
+            if (!jsonString) {
+              throw new Error('No JSON array found in story generation output');
+            }
+          }
+          
+          // Parse JSON
+          let storiesData: any[];
+          try {
+            storiesData = JSON.parse(jsonString);
+          } catch (parseError: any) {
+            console.error('[Worker] JSON parse error:', parseError.message);
+            console.error('[Worker] JSON string preview:', jsonString.substring(0, 500));
+            throw new Error(`Failed to parse JSON: ${parseError.message}`);
+          }
+          
+          if (!Array.isArray(storiesData)) {
+            console.error('[Worker] Parsed data is not an array. Type:', typeof storiesData);
+            console.error('[Worker] Parsed data:', JSON.stringify(storiesData, null, 2).substring(0, 500));
+            throw new Error('Parsed data is not an array');
+          }
+          
+          if (storiesData.length === 0) {
+            console.warn('[Worker] Parsed array is empty. Full output:', result.output?.substring(0, 1000));
+            throw new Error('Parsed array is empty - no stories generated');
+          }
+          
+          console.log(`[Worker] Parsed ${storiesData.length} stories from AI response`);
+          
+          // Get project_id from PRD and validate PRD exists
+          const prdResult = await pool.query(
+            'SELECT project_id, status FROM prd_documents WHERE id = $1',
+            [prdId]
+          );
+          
+          if (prdResult.rows.length === 0) {
+            throw new Error(`PRD ${prdId} not found`);
+          }
+          
+          const projectId = prdResult.rows[0].project_id;
+          const prdStatus = prdResult.rows[0].status;
+          
+          // Validate project exists
+          const projectCheck = await pool.query(
+            'SELECT id FROM projects WHERE id = $1',
+            [projectId]
+          );
+          
+          if (projectCheck.rows.length === 0) {
+            throw new Error(`Project ${projectId} not found for PRD ${prdId}`);
+          }
+          
+          console.log(`[Worker] Creating user stories for project ${projectId} from PRD ${prdId} (status: ${prdStatus})`);
+          
+          // Save each story to database with validation
+          const savedStories: string[] = [];
+          const skippedStories: string[] = [];
+          let storiesWithErrors = 0;
+          
+          for (const storyData of storiesData) {
+            try {
+              // Extract fields from story data
+              const title = storyData.title || '';
+              const description = storyData.description || storyData.title || '';
+              
+              // Handle acceptance_criteria: can be array of strings or array of objects
+              let acceptanceCriteria: any[] = [];
+              if (storyData.acceptance_criteria) {
+                if (Array.isArray(storyData.acceptance_criteria)) {
+                  acceptanceCriteria = storyData.acceptance_criteria.map((ac: any) => {
+                    // If it's an object with 'criterion' field, extract it
+                    if (typeof ac === 'object' && ac.criterion) {
+                      return ac.criterion;
+                    }
+                    // If it's already a string, use it
+                    if (typeof ac === 'string') {
+                      return ac;
+                    }
+                    // Fallback: stringify the object
+                    return JSON.stringify(ac);
+                  });
+                }
+              }
+              
+              // Validate that we have at least a title
+              if (!title || title.trim() === '') {
+                console.warn(`[Worker] ⚠️ Skipping story with empty title`);
+                skippedStories.push('(empty title)');
+                continue;
+              }
+              
+              // Validate title is not too long (database constraint)
+              if (title.length > 1000) {
+                console.warn(`[Worker] ⚠️ Skipping story with title too long (${title.length} chars): "${title.substring(0, 50)}..."`);
+                skippedStories.push(title.substring(0, 50));
+                continue;
+              }
+              
+              // Save story as task (type='story', no epic_id - stories are independent)
+              const storyResult = await pool.query(
+                `INSERT INTO tasks (project_id, title, description, type, status, acceptance_criteria, generated_from_prd, priority, epic_id)
+                 VALUES ($1, $2, $3, 'story', 'todo', $4, true, $5, NULL)
+                 RETURNING id`,
+                [
+                  projectId,
+                  title.trim(),
+                  description || null,
+                  JSON.stringify(acceptanceCriteria),
+                  storyData.priority || 0,
+                ]
+              );
+              
+              const storyId = storyResult.rows[0].id;
+              savedStories.push(storyId);
+              console.log(`[Worker] ✅ Saved story: "${title.substring(0, 50)}..." (${storyId}) - project: ${projectId}, PRD: ${prdId}`);
+            } catch (storyError: any) {
+              console.error(`[Worker] ❌ Error saving story "${storyData.title?.substring(0, 50) || '(no title)'}":`, storyError.message);
+              console.error(`[Worker] Story data:`, JSON.stringify(storyData, null, 2).substring(0, 500));
+              storiesWithErrors++;
+              skippedStories.push(storyData.title || '(error)');
+            }
+          }
+          
+          // Validate integrity: Check that all saved stories are properly linked
+          if (savedStories.length > 0) {
+            const integrityCheck = await pool.query(
+              `SELECT id, title, type, project_id, epic_id 
+               FROM tasks 
+               WHERE id = ANY($1::uuid[])`,
+              [savedStories]
+            );
+            
+            const orphanedStories = integrityCheck.rows.filter((s: any) => 
+              s.project_id !== projectId || s.type !== 'story' || s.epic_id !== null
+            );
+            
+            if (orphanedStories.length > 0) {
+              console.error(`[Worker] ❌ Found ${orphanedStories.length} stories with integrity issues:`, 
+                orphanedStories.map((s: any) => `${s.title} (project: ${s.project_id}, type: ${s.type}, epic_id: ${s.epic_id})`));
+            }
+          }
+          
+          console.log(`[Worker] Story generation summary: ${savedStories.length} stories saved, ${skippedStories.length} skipped, ${storiesWithErrors} errors`);
+          
+          if (savedStories.length === 0) {
+            throw new Error('No stories were successfully saved to the database');
+          }
+          
+          // Save stories to filesystem
+          try {
+            const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
+            if (projectResult.rows.length > 0) {
+              const projectBasePath = projectResult.rows[0].base_path;
+              const storiesDir = path.join(projectBasePath, 'docs', 'user-stories', projectId);
+              await fs.mkdir(storiesDir, { recursive: true });
+              
+              // Save as JSON
+              const jsonPath = path.join(storiesDir, 'stories.json');
+              await fs.writeFile(jsonPath, jsonString, 'utf8');
+              
+              console.log(`[Worker] Saved stories to ${jsonPath}`);
+            }
+          } catch (fsError) {
+            console.error('[Worker] Error saving stories to filesystem:', fsError);
+            // Don't fail the job if filesystem save fails
+          }
+          
+        } catch (error: any) {
+          console.error('[Worker] Error processing story generation:', error);
+          console.error('[Worker] Full output:', result.output?.substring(0, 1000));
+          // Mark job as failed so user knows something went wrong
+          await jobRepo.updateStatus(jobId, 'failed', undefined, new Date());
+          await jobRepo.addEvent(jobId, 'failed', { 
+            error: error.message || String(error),
+            output_preview: result.output?.substring(0, 500)
+          });
+          throw error; // Re-throw to mark job as failed
+        }
+      } else {
+        // Job succeeded but not a story generation job - check if it's architecture
+        // Architecture jobs don't have a phase, they're just plan mode jobs
+        // The architecture is saved manually by the user, but we should ensure the output is available
+        if (mode === 'plan' && !isCodingSession && !isStoryGeneration && !isRFCGeneration && !isBreakdownGeneration && !isUserFlowGeneration && !isPrototypeAnalysis && !isQASession) {
+          // This is likely an architecture generation job
+          console.log(`[Worker] Architecture generation completed. Output available in job ${jobId}.`);
+          console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+          // Architecture is saved manually by user, so we just log completion
+        }
+      }
+      
+      // Process RFC Generation results
+      if (isRFCGeneration) {
+        console.log(`[Worker] Processing RFC generation`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        
+        try {
+          // Get RFC ID from job args (it was stored when RFC was created)
+          const rfcIdFromArgs = job.args.rfc_id;
+          if (!rfcIdFromArgs) {
+            // Try to find RFC by project_id and prd_id
+            const prdIdFromArgs = job.args.prd_id;
+            if (prdIdFromArgs) {
+              const prdResult = await pool.query(
+                'SELECT project_id FROM prd_documents WHERE id = $1',
+                [prdIdFromArgs]
+              );
+              if (prdResult.rows.length > 0) {
+                const projectId = prdResult.rows[0].project_id;
+                const rfcResult = await pool.query(
+                  'SELECT id FROM rfc_documents WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1',
+                  [projectId]
+                );
+                if (rfcResult.rows.length > 0) {
+                  const foundRfcId = rfcResult.rows[0].id;
+                  
+                  // Update RFC with generated content
+                  await pool.query(
+                    'UPDATE rfc_documents SET content = $1, status = $2, updated_at = NOW() WHERE id = $3',
+                    [result.output, 'draft', foundRfcId]
+                  );
+                  
+                  // Save to filesystem
+                  const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
+                  if (projectResult.rows.length > 0) {
+                    const projectBasePath = projectResult.rows[0].base_path;
+                    const rfcDir = path.join(projectBasePath, 'docs', 'rfc', projectId);
+                    await fs.mkdir(rfcDir, { recursive: true });
+                    
+                    const rfcPath = path.join(rfcDir, `rfc-${foundRfcId}.md`);
+                    await fs.writeFile(rfcPath, result.output, 'utf8');
+                    console.log(`[Worker] Saved RFC to ${rfcPath}`);
+                  }
+                  
+                  console.log(`[Worker] RFC ${foundRfcId} updated with generated content`);
+                }
+              }
+            }
+          } else {
+            // Update RFC with generated content
+            await pool.query(
+              'UPDATE rfc_documents SET content = $1, status = $2, updated_at = NOW() WHERE id = $3',
+              [result.output, 'draft', rfcIdFromArgs]
+            );
+            
+            // Get project_id for filesystem save
+            const rfcResult = await pool.query('SELECT project_id FROM rfc_documents WHERE id = $1', [rfcIdFromArgs]);
+            if (rfcResult.rows.length > 0) {
+              const projectId = rfcResult.rows[0].project_id;
+              const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
+              if (projectResult.rows.length > 0) {
+                const projectBasePath = projectResult.rows[0].base_path;
+                const rfcDir = path.join(projectBasePath, 'docs', 'rfc', projectId);
+                await fs.mkdir(rfcDir, { recursive: true });
+                
+                const rfcPath = path.join(rfcDir, `rfc-${rfcIdFromArgs}.md`);
+                await fs.writeFile(rfcPath, result.output, 'utf8');
+                console.log(`[Worker] Saved RFC to ${rfcPath}`);
+              }
+            }
+            
+            console.log(`[Worker] RFC ${rfcIdFromArgs} updated with generated content`);
+          }
+          
+          // TODO: Parse and extract API contracts and database schemas if they were requested
+          // This would require parsing the markdown to find code blocks with JSON/SQL
+          
+        } catch (error: any) {
+          console.error('[Worker] Error processing RFC generation:', error);
+          console.error('[Worker] Full output preview:', result.output?.substring(0, 1000));
+        }
+      }
+      
+      // Process Breakdown Generation results
+      if (isBreakdownGeneration) {
+        console.log(`[Worker] Processing breakdown generation for RFC ${rfcId}`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        
+        try {
+          const rfcIdFromArgs = job.args.rfc_id;
+          const maxDaysPerTask = job.args.max_days_per_task || 3;
+          const estimateStoryPoints = job.args.estimate_story_points !== false;
+          
+          if (!rfcIdFromArgs) {
+            throw new Error('RFC ID not found in job args');
+          }
+
+          // Parse breakdown JSON from AI response
+          let jsonString = '';
+          let jsonMatch: RegExpMatchArray | null = null;
+          
+          // Try pattern 1: ```json ... ```
+          jsonMatch = result.output.match(/```\s*json\s*(\{[\s\S]*?\})\s*```/i);
+          if (jsonMatch && jsonMatch[1]) {
+            jsonString = jsonMatch[1].trim();
+            console.log('[Worker] Found JSON using pattern 1 (json code block)');
+          }
+          
+          // Try pattern 2: Direct JSON object
+          if (!jsonString) {
+            jsonMatch = result.output.match(/\{[\s\S]*\}/);
+            if (jsonMatch && jsonMatch[0]) {
+              jsonString = jsonMatch[0].trim();
+              console.log('[Worker] Found JSON using pattern 2 (direct object)');
+            }
+          }
+          
+          if (!jsonString) {
+            throw new Error('No JSON object found in breakdown generation output');
+          }
+          
+          // Parse JSON
+          const breakdownData = JSON.parse(jsonString);
+          if (!breakdownData.epics || !Array.isArray(breakdownData.epics)) {
+            throw new Error('Invalid breakdown: epics array missing');
+          }
+          if (!breakdownData.tasks || !Array.isArray(breakdownData.tasks)) {
+            throw new Error('Invalid breakdown: tasks array missing');
+          }
+          
+          // Validate tasks don't exceed max days
+          const invalidTasks = breakdownData.tasks.filter((t: any) => 
+            t.estimated_days && t.estimated_days > maxDaysPerTask
+          );
+          if (invalidTasks.length > 0) {
+            console.warn(`[Worker] Warning: ${invalidTasks.length} tasks exceed ${maxDaysPerTask} days:`, 
+              invalidTasks.map((t: any) => `${t.title} (${t.estimated_days} days)`));
+            // Continue anyway but log warning
+          }
+          
+          console.log(`[Worker] Parsed ${breakdownData.epics.length} epics and ${breakdownData.tasks.length} tasks`);
+          
+          // Get project_id from RFC
+          const rfcResult = await pool.query('SELECT project_id FROM rfc_documents WHERE id = $1', [rfcIdFromArgs]);
+          if (rfcResult.rows.length === 0) {
+            throw new Error('RFC not found');
+          }
+          const projectId = rfcResult.rows[0].project_id;
+          
+          // Validate RFC exists and belongs to project
+          const rfcCheck = await pool.query(
+            'SELECT id, project_id FROM rfc_documents WHERE id = $1 AND project_id = $2',
+            [rfcIdFromArgs, projectId]
+          );
+          if (rfcCheck.rows.length === 0) {
+            throw new Error(`RFC ${rfcIdFromArgs} not found or doesn't belong to project ${projectId}`);
+          }
+          
+          // Create épicas with validation
+          const epicIdMap = new Map<string, string>(); // epic_title -> epic_id
+          const createdEpicIds: string[] = [];
+          
+          for (const epicData of breakdownData.epics) {
+            if (!epicData.title || epicData.title.trim() === '') {
+              console.warn(`[Worker] Skipping epic with empty title`);
+              continue;
+            }
+            
+            try {
+              const epicResult = await pool.query(
+                `INSERT INTO epics (project_id, rfc_id, title, description, story_points, order_index, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'planned')
+                 RETURNING id`,
+                [
+                  projectId,
+                  rfcIdFromArgs,
+                  epicData.title.trim(),
+                  epicData.description || null,
+                  epicData.story_points || null,
+                  epicData.order_index || null,
+                ]
+              );
+              
+              const epicId = epicResult.rows[0].id;
+              epicIdMap.set(epicData.title.trim(), epicId);
+              createdEpicIds.push(epicId);
+              console.log(`[Worker] ✅ Created epic: "${epicData.title}" (${epicId}) linked to RFC ${rfcIdFromArgs}`);
+            } catch (epicError: any) {
+              console.error(`[Worker] ❌ Error creating epic "${epicData.title}":`, epicError.message);
+              // Continue with next epic, but log the error
+            }
+          }
+          
+          if (epicIdMap.size === 0) {
+            throw new Error('No epics were created successfully. Cannot create tasks without epics.');
+          }
+          
+          // Create tasks with validation
+          let tasksCreated = 0;
+          let tasksSkipped = 0;
+          const orphanedTasks: string[] = [];
+          
+          for (const taskData of breakdownData.tasks) {
+            if (!taskData.title || taskData.title.trim() === '') {
+              console.warn(`[Worker] ⚠️ Skipping task with empty title`);
+              tasksSkipped++;
+              continue;
+            }
+            
+            const epicId = epicIdMap.get(taskData.epic_title);
+            if (!epicId) {
+              console.error(`[Worker] ❌ Epic "${taskData.epic_title}" not found for task "${taskData.title}". Available epics: ${Array.from(epicIdMap.keys()).join(', ')}`);
+              orphanedTasks.push(taskData.title);
+              tasksSkipped++;
+              continue;
+            }
+            
+            // Ensure estimated_days doesn't exceed max
+            const estimatedDays = Math.min(taskData.estimated_days || 3, maxDaysPerTask);
+            
+            const acceptanceCriteria = taskData.acceptance_criteria || [];
+            
+            try {
+              const taskResult = await pool.query(
+                `INSERT INTO tasks (project_id, title, description, type, status, epic_id, estimated_days, story_points, breakdown_order, acceptance_criteria, priority)
+                 VALUES ($1, $2, $3, 'task', 'todo', $4, $5, $6, $7, $8, 0)
+                 RETURNING id`,
+                [
+                  projectId,
+                  taskData.title.trim(),
+                  taskData.description || null,
+                  epicId,
+                  estimatedDays,
+                  taskData.story_points || null,
+                  taskData.breakdown_order || null,
+                  JSON.stringify(acceptanceCriteria),
+                ]
+              );
+              
+              tasksCreated++;
+              console.log(`[Worker] ✅ Created task: "${taskData.title}" (${taskResult.rows[0].id}) linked to epic "${taskData.epic_title}" (${epicId})`);
+            } catch (taskError: any) {
+              console.error(`[Worker] ❌ Error creating task "${taskData.title}":`, taskError.message);
+              tasksSkipped++;
+            }
+          }
+          
+          // Validate integrity: Check for orphaned records
+          const orphanedEpics = await pool.query(
+            'SELECT id, title FROM epics WHERE rfc_id = $1 AND id NOT IN (SELECT DISTINCT epic_id FROM tasks WHERE epic_id IS NOT NULL)',
+            [rfcIdFromArgs]
+          );
+          
+          if (orphanedEpics.rows.length > 0) {
+            console.warn(`[Worker] ⚠️ Found ${orphanedEpics.rows.length} epics without tasks:`, 
+              orphanedEpics.rows.map((e: any) => e.title).join(', '));
+          }
+          
+          if (orphanedTasks.length > 0) {
+            console.error(`[Worker] ❌ ${orphanedTasks.length} tasks could not be created due to missing epics:`, orphanedTasks.join(', '));
+          }
+          
+          console.log(`[Worker] Breakdown summary: ${epicIdMap.size} epics created, ${tasksCreated} tasks created, ${tasksSkipped} tasks skipped`);
+          
+          // If no tasks were created but epics exist, warn about potential orphaned epics
+          if (tasksCreated === 0 && epicIdMap.size > 0) {
+            console.error(`[Worker] ⚠️ WARNING: Created ${epicIdMap.size} epics but no tasks. Epics may be orphaned.`);
+          }
+          
+        } catch (error: any) {
+          console.error('[Worker] Error processing breakdown generation:', error);
+          console.error('[Worker] Full output preview:', result.output?.substring(0, 1000));
+        }
+      }
+      
+      // Process User Flow Generation results
+      if (isUserFlowGeneration) {
+        console.log(`[Worker] Processing user flow generation for user flow ${userFlowId}`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        
+        try {
+          if (!userFlowId) {
+            throw new Error('User flow ID not found in job args');
+          }
+
+          // Extract Mermaid diagram from output
+          let mermaidDiagram = '';
+          
+          // Pattern 1: Code block with mermaid
+          const mermaidMatch = result.output.match(/```\s*mermaid\s*([\s\S]*?)\s*```/i);
+          if (mermaidMatch && mermaidMatch[1]) {
+            mermaidDiagram = mermaidMatch[1].trim();
+            console.log('[Worker] Found Mermaid diagram using pattern 1 (mermaid code block)');
+          } else {
+            // Pattern 2: Direct mermaid content (might start with flowchart, graph, sequenceDiagram, etc.)
+            const directMatch = result.output.match(/(flowchart|graph|sequenceDiagram|stateDiagram|classDiagram|erDiagram|gantt|pie|gitgraph|journey)[\s\S]*/i);
+            if (directMatch && directMatch[0]) {
+              mermaidDiagram = directMatch[0].trim();
+              console.log('[Worker] Found Mermaid diagram using pattern 2 (direct content)');
+            } else {
+              // Fallback: use the entire output
+              mermaidDiagram = result.output.trim();
+              console.log('[Worker] Using entire output as Mermaid diagram');
+            }
+          }
+
+          if (!mermaidDiagram) {
+            throw new Error('No Mermaid diagram found in user flow generation output');
+          }
+
+          // Update user flow with diagram
+          await pool.query(
+            `UPDATE user_flows SET flow_diagram = $1, updated_at = NOW() WHERE id = $2`,
+            [mermaidDiagram, userFlowId]
+          );
+          
+          console.log(`[Worker] Updated user flow ${userFlowId} with Mermaid diagram (${mermaidDiagram.length} chars)`);
+          
+        } catch (error: any) {
+          console.error('[Worker] Error processing user flow generation:', error);
+          console.error('[Worker] Full output preview:', result.output?.substring(0, 1000));
+        }
+      }
+
+      // Process Prototype Analysis results
+      if (isPrototypeAnalysis) {
+        console.log(`[Worker] Processing prototype analysis for prototype ${prototypeId}`);
+        console.log(`[Worker] Output length: ${result.output?.length || 0} characters`);
+        
+        try {
+          if (!prototypeId) {
+            throw new Error('Prototype ID not found in job args');
+          }
+
+          // Extract JSON from output
+          let jsonString = '';
+          
+          // Pattern 1: Code block with json
+          const jsonBlockMatch = result.output.match(/```\s*json\s*(\{[\s\S]*?\})\s*```/i);
+          if (jsonBlockMatch && jsonBlockMatch[1]) {
+            jsonString = jsonBlockMatch[1].trim();
+            console.log('[Worker] Found JSON using pattern 1 (json code block)');
+          } else {
+            // Pattern 2: Direct JSON object
+            const objectMatch = result.output.match(/\{[\s\S]*\}/);
+            if (objectMatch && objectMatch[0]) {
+              jsonString = objectMatch[0].trim();
+              console.log('[Worker] Found JSON using pattern 2 (direct object)');
+            }
+          }
+
+          if (!jsonString) {
+            throw new Error('No JSON object found in prototype analysis output');
+          }
+
+          // Parse and validate JSON
+          const analysisResult = JSON.parse(jsonString);
+          
+          // Validate structure
+          if (!analysisResult.elements && !analysisResult.flows && !analysisResult.insights) {
+            console.warn('[Worker] Warning: Analysis result missing expected fields (elements, flows, insights)');
+          }
+
+          // Update prototype with analysis
+          await pool.query(
+            `UPDATE prototypes SET analysis_result = $1 WHERE id = $2`,
+            [JSON.stringify(analysisResult), prototypeId]
+          );
+          
+          console.log(`[Worker] Updated prototype ${prototypeId} with analysis result`);
+          
+        } catch (error: any) {
+          console.error('[Worker] Error processing prototype analysis:', error);
+          console.error('[Worker] Full output preview:', result.output?.substring(0, 1000));
+        }
+      }
       
       // Process QA results
       if (isQASession) {
@@ -2143,6 +4025,23 @@ async function syncActiveJobs() {
     console.error('[Worker] Error syncing active jobs:', error);
   }
 }
+
+// Start HTTP server for health checks
+const app = express();
+const WORKER_PORT = process.env.WORKER_PORT || 3002;
+
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    service: 'worker',
+    activeJobs,
+    timestamp: new Date().toISOString() 
+  });
+});
+
+app.listen(WORKER_PORT, () => {
+  console.log(`Worker HTTP server listening on port ${WORKER_PORT}`);
+});
 
 // Start polling
 console.log('AI Worker started');
