@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { tasksApi } from '../api/tasks';
+import { userStoriesApi } from '../api/userStories';
+import { prdApi } from '../api/prd';
 import { Task } from '@devflow-studio/shared';
 import { useToast } from '../context/ToastContext';
 import CreateUserStoryForm from './CreateUserStoryForm';
@@ -18,13 +20,55 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
   const [editingStory, setEditingStory] = useState<Task | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [storiesCount, setStoriesCount] = useState(10);
+  const [hasPRD, setHasPRD] = useState<boolean | null>(null); // null = not checked yet
   const [idea, setIdea] = useState('');
   const [isImproving, setIsImproving] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
     loadStories();
+    checkPRD();
+    
+    // Listen for artifact updates to refresh PRD status
+    const handleArtifactUpdate = (event: CustomEvent) => {
+      if (event.detail.projectId === projectId) {
+        checkPRD(); // Re-check PRD when artifacts are updated
+      }
+    };
+    
+    window.addEventListener('artifactUpdated' as any, handleArtifactUpdate);
+    
+    return () => {
+      window.removeEventListener('artifactUpdated' as any, handleArtifactUpdate);
+    };
   }, [projectId]);
+
+  const checkPRD = async () => {
+    try {
+      // Check new PRD system first
+      const prd = await prdApi.getByProject(projectId);
+      if (prd) {
+        setHasPRD(true);
+        return;
+      }
+    } catch (error: any) {
+      // 404 is expected when no PRD exists in new system - continue checking old system
+      if (error.response?.status !== 404) {
+        console.error('Error checking PRD (new system):', error);
+      }
+    }
+    
+    // Fallback: Check old PRD system (artifacts)
+    try {
+      const { artifactsApi } = await import('../api/artifacts');
+      const artifacts = await artifactsApi.getByProject(projectId);
+      const prdArtifact = artifacts.find((a) => a.type === 'prd');
+      setHasPRD(!!prdArtifact);
+    } catch (error: any) {
+      console.error('Error checking PRD (old system):', error);
+      setHasPRD(false);
+    }
+  };
 
   // Listen for AI job completion
   useEffect(() => {
@@ -35,19 +79,42 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
           
           if (job.status === 'completed') {
             try {
-              const result = await aiJobsApi.getResult(currentJobId);
               if (isImproving) {
+                const result = await aiJobsApi.getResult(currentJobId);
                 await processImprovedStory(result.output);
-              } else {
-              await processGeneratedStories(result.output);
-              }
-              setGenerating(false);
-              setIsImproving(false);
-              setCurrentJobId(null);
-              if (isImproving) {
+                setGenerating(false);
+                setIsImproving(false);
+                setCurrentJobId(null);
                 showToast('Story improved! Review and save it.', 'success');
               } else {
-              showToast('User stories generated! Review and save them.', 'success');
+                // Check if this was a story_generation job (new flow) or old flow
+                const phase = job.args?.phase;
+                if (phase === 'story_generation') {
+                  // For new flow, stories are saved automatically by worker
+                  // Wait a moment for database to be fully updated, then reload
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  
+                  // Reload stories from API
+                  try {
+                    const data = await tasksApi.getByProjectAndType(projectId, 'story');
+                    setStories(data);
+                    setGenerating(false);
+                    setCurrentJobId(null);
+                    showToast(`User stories generated successfully! (${data.length} stories)`, 'success');
+                  } catch (reloadError) {
+                    console.error('Failed to reload stories:', reloadError);
+                    setGenerating(false);
+                    setCurrentJobId(null);
+                    showToast('Stories generated, but failed to reload. Please refresh the page.', 'warning');
+                  }
+                } else {
+                  // Old flow - parse and show for review
+                  const result = await aiJobsApi.getResult(currentJobId);
+                  await processGeneratedStories(result.output);
+                  setGenerating(false);
+                  setCurrentJobId(null);
+                  showToast('User stories generated! Review and save them.', 'success');
+                }
               }
             } catch (error) {
               console.error('Failed to get job result:', error);
@@ -75,7 +142,7 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
       
       checkJobStatus();
     }
-  }, [currentJobId, generating, isImproving, showToast]);
+  }, [currentJobId, generating, isImproving, projectId, showToast]);
 
   const loadStories = async () => {
     try {
@@ -89,6 +156,9 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
     }
   };
 
+  // Note: processGeneratedStories is no longer needed for new flow
+  // Stories are saved automatically by the worker
+  // This function is kept for backward compatibility with old flow
   const processGeneratedStories = async (output: string) => {
     try {
       // Try to parse JSON array from output
@@ -186,10 +256,80 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
     setGenerating(true);
     setIsImproving(false);
     try {
-      const result = await tasksApi.generateStories(projectId, storiesCount);
-      setCurrentJobId(result.job_id);
-      showToast('User stories generation started. This may take a few minutes...', 'info');
+      // Check if we already know there's a PRD (to avoid unnecessary API call)
+      if (hasPRD === true) {
+        // We already know there's a PRD, use new endpoint directly
+        const prd = await prdApi.getByProject(projectId);
+        if (!prd) {
+          // PRD was deleted, update state
+          setHasPRD(false);
+          showToast('PRD not found. Please create a PRD first.', 'error');
+          setGenerating(false);
+          return;
+        }
+
+        // Use new API endpoint for generating stories from PRD
+        const result = await userStoriesApi.generate({
+          project_id: projectId,
+          prd_id: prd.id,
+        });
+        if (result.job_id) {
+          setCurrentJobId(result.job_id);
+          showToast('Generating all user stories from PRD. This may take a few minutes...', 'info');
+        } else {
+          showToast('Generation started but job ID not returned', 'warning');
+        }
+        return;
+      }
+
+      // Check PRD status first
+      const prd = await prdApi.getByProject(projectId);
+      
+      if (!prd) {
+        // No PRD found - check old system as fallback
+        try {
+          const { artifactsApi } = await import('../api/artifacts');
+          const artifacts = await artifactsApi.getByProject(projectId);
+          const prdArtifact = artifacts.find((a) => a.type === 'prd');
+          
+          if (!prdArtifact) {
+            // No PRD in either system - use old endpoint with count
+            setHasPRD(false);
+            const result = await tasksApi.generateStories(projectId, storiesCount);
+            setCurrentJobId(result.job_id);
+            showToast(`Generating ${storiesCount} user stories... This may take a few minutes...`, 'info');
+            return;
+          } else {
+            // PRD exists in old system, but we can't use it for new flow
+            // Show error message
+            setHasPRD(false);
+            showToast('Please use the new PRD system in the "Prd" tab to generate stories automatically.', 'warning');
+            setGenerating(false);
+            return;
+          }
+        } catch (error: any) {
+          setHasPRD(false);
+          const result = await tasksApi.generateStories(projectId, storiesCount);
+          setCurrentJobId(result.job_id);
+          showToast(`Generating ${storiesCount} user stories... This may take a few minutes...`, 'info');
+          return;
+        }
+      }
+
+      // PRD found - use new endpoint
+      setHasPRD(true);
+      const result = await userStoriesApi.generate({
+        project_id: projectId,
+        prd_id: prd.id,
+      });
+      if (result.job_id) {
+        setCurrentJobId(result.job_id);
+        showToast('Generating all user stories from PRD. This may take a few minutes...', 'info');
+      } else {
+        showToast('Generation started but job ID not returned', 'warning');
+      }
     } catch (error: any) {
+      console.error('Error generating stories:', error);
       showToast(error.response?.data?.error || 'Failed to generate user stories', 'error');
       setGenerating(false);
       setCurrentJobId(null);
@@ -274,7 +414,11 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
               disabled={generating || isImproving}
               className="px-4 py-2 text-sm bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
             >
-              {generating ? 'Generating...' : 'Generate Multiple with AI'}
+              {generating
+                ? 'Generating...'
+                : hasPRD === true
+                  ? 'Generate All Stories from PRD'
+                  : 'Generate Multiple with AI'}
             </button>
           </div>
         </div>
@@ -319,8 +463,9 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
           </div>
         )}
 
-        {/* Generate Form */}
-        {!showCreateForm && !showImproveForm && (
+        {/* Generate Form - Only show count input if no PRD (legacy mode) */}
+        {/* Only show when hasPRD is explicitly false (not null, which means still checking) */}
+        {!showCreateForm && !showImproveForm && hasPRD === false && (
           <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
             <div className="flex items-center space-x-4">
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -335,6 +480,16 @@ export default function UserStoriesManager({ projectId }: UserStoriesManagerProp
                 className="w-20 px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400"
               />
             </div>
+          </div>
+        )}
+
+        {/* Info message when PRD exists */}
+        {/* Only show when hasPRD is explicitly true */}
+        {!showCreateForm && !showImproveForm && hasPRD === true && (
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
+            <p className="text-sm text-gray-700 dark:text-gray-300">
+              <strong>✨ New Flow:</strong> Click "Generate All Stories from PRD" to automatically generate all user stories needed to fulfill the PRD requirements. No need to specify a count - the AI will generate all necessary stories based on your PRD.
+            </p>
           </div>
         )}
 

@@ -52,6 +52,11 @@ export const codingSessionsApi = {
     return response.data;
   },
 
+  startReview: async (sessionId: string): Promise<{ review_job_id: string; message: string }> => {
+    const response = await apiClient.post(`/coding-sessions/${sessionId}/review`);
+    return response.data;
+  },
+
   // Connect to SSE stream for real-time updates
   connectStream: (sessionId: string, onEvent: (event: any) => void, onError?: (error: any) => void) => {
     const eventSource = new EventSource(`${apiClient.defaults.baseURL}/coding-sessions/stream/${sessionId}`);

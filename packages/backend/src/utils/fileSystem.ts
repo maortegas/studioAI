@@ -16,8 +16,18 @@ export function validatePath(filePath: string, baseDir: string): boolean {
 export async function ensureDirectory(dirPath: string): Promise<void> {
   try {
     await fs.access(dirPath);
-  } catch {
-    await fs.mkdir(dirPath, { recursive: true });
+    // Directory exists, verify it's actually a directory
+    const stats = await fs.stat(dirPath);
+    if (!stats.isDirectory()) {
+      throw new Error(`Path exists but is not a directory: ${dirPath}`);
+    }
+  } catch (error: any) {
+    if (error.code === 'ENOENT') {
+      // Directory doesn't exist, create it recursively
+      await fs.mkdir(dirPath, { recursive: true });
+    } else {
+      throw error;
+    }
   }
 }
 

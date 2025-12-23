@@ -41,16 +41,33 @@ export default function ArchitectureManager({ projectId }: ArchitectureManagerPr
               // Get the result
               const result = await aiJobsApi.getResult(currentJobId);
               
-              // Set the content so user can review and save
+              // Set the content so user can review
               setContent(result.output);
+              
+              // Auto-save the architecture after generation
+              if (result.output && result.output.trim().length > 0) {
+                try {
+                  await artifactsApi.saveArchitecture(projectId, result.output);
+                  showToast('Architecture generated and saved successfully!', 'success');
+                  // Reload to show the saved architecture
+                  await loadArchitecture();
+                  // Trigger stage refresh
+                  window.dispatchEvent(new CustomEvent('artifactUpdated', { detail: { projectId } }));
+                } catch (saveError: any) {
+                  console.error('Failed to auto-save architecture:', saveError);
+                  showToast('Architecture generated! Please save manually if auto-save failed.', 'warning');
+                }
+              } else {
+                showToast('Architecture generated but output is empty. Please try again.', 'warning');
+              }
+              
               setGenerating(false);
               setCurrentJobId(null);
-              showToast('Architecture generated! Review and save when ready.', 'success');
-              
-              // Reload to show the architecture
-              await loadArchitecture();
             } catch (error) {
               console.error('Failed to get job result:', error);
+              setGenerating(false);
+              setCurrentJobId(null);
+              showToast('Failed to get architecture generation result', 'error');
             }
           } else if (job.status === 'failed') {
             setGenerating(false);
@@ -80,8 +97,14 @@ export default function ArchitectureManager({ projectId }: ArchitectureManagerPr
         try {
           const data = await artifactsApi.getContent(arch.id);
           setContent(data.content);
-        } catch (error) {
+        } catch (error: any) {
           console.error('Failed to load architecture content:', error);
+          // If file doesn't exist yet (404 or file not found), that's okay
+          // Just leave content empty - user can generate or upload
+          if (error.response?.status !== 404 && !error.message?.includes('ENOENT')) {
+            // Only show error for unexpected errors
+            showToast('Failed to load architecture content', 'warning');
+          }
         }
       }
     } catch (error) {

@@ -24,6 +24,7 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
     git_tag: '',
     release_date: '',
   });
+  const [generatingDeployment, setGeneratingDeployment] = useState<string | null>(null);
 
   useEffect(() => {
     loadReleases();
@@ -107,6 +108,23 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
     }
   };
 
+  const handleGenerateDeployment = async (releaseId: string, environment: 'staging' | 'production') => {
+    try {
+      setGeneratingDeployment(`${releaseId}-${environment}`);
+      const result = await releasesApi.generateDeployment(projectId, environment, {
+        release_id: releaseId,
+      });
+      showToast(
+        `Deployment package generated for ${environment}! Files: ${Object.keys(result.files).join(', ')}`,
+        'success'
+      );
+    } catch (error: any) {
+      showToast(error.response?.data?.error || `Failed to generate ${environment} deployment`, 'error');
+    } finally {
+      setGeneratingDeployment(null);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       version: '',
@@ -168,12 +186,14 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
       {/* Actions */}
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Releases</h2>
-        <button
-          onClick={() => setShowCreateForm(!showCreateForm)}
-          className="bg-blue-600 dark:bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-700 dark:hover:bg-blue-600"
-        >
-          {showCreateForm ? 'Cancel' : 'Create Release'}
-        </button>
+        <div className="flex space-x-2">
+          <button
+            onClick={() => setShowCreateForm(!showCreateForm)}
+            className="bg-blue-600 dark:bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-700 dark:hover:bg-blue-600"
+          >
+            {showCreateForm ? 'Cancel' : 'Create Release'}
+          </button>
+        </div>
       </div>
 
       {/* Create Form */}
@@ -297,53 +317,90 @@ export default function ReleaseManager({ projectId }: ReleaseManagerProps) {
                       <span>Created: {new Date(release.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
-                  <div className="flex space-x-2">
-                    {release.status === 'draft' && (
-                      <>
+                  <div className="flex flex-col items-end gap-2">
+                    {/* Deployment buttons - always visible for ready/published */}
+                    {(release.status === 'ready' || release.status === 'published') && (
+                      <div className="flex space-x-2">
                         <button
-                          onClick={() => handleUpdateRelease(release.id, 'ready')}
-                          className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                          onClick={() => handleGenerateDeployment(release.id, 'staging')}
+                          disabled={generatingDeployment === `${release.id}-staging`}
+                          className="px-4 py-2 text-sm font-medium bg-orange-500 text-white rounded hover:bg-orange-600 dark:bg-orange-600 dark:hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          title="Generate staging deployment package"
                         >
-                          Mark Ready
+                          {generatingDeployment === `${release.id}-staging` ? (
+                            <span className="flex items-center gap-2">
+                              <span className="animate-spin">⏳</span> Generating...
+                            </span>
+                          ) : (
+                            '🚀 Generate Staging'
+                          )}
                         </button>
                         <button
-                          onClick={() => handlePublishRelease(release.id)}
-                          className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200"
+                          onClick={() => handleGenerateDeployment(release.id, 'production')}
+                          disabled={generatingDeployment === `${release.id}-production`}
+                          className="px-4 py-2 text-sm font-medium bg-purple-500 text-white rounded hover:bg-purple-600 dark:bg-purple-600 dark:hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          title="Generate production deployment package"
                         >
-                          Publish
+                          {generatingDeployment === `${release.id}-production` ? (
+                            <span className="flex items-center gap-2">
+                              <span className="animate-spin">⏳</span> Generating...
+                            </span>
+                          ) : (
+                            '🚀 Generate Production'
+                          )}
                         </button>
-                        <button
-                          onClick={() => handleDeleteRelease(release.id)}
-                          className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
-                        >
-                          Delete
-                        </button>
-                      </>
+                      </div>
                     )}
-                    {release.status === 'ready' && (
-                      <>
+                    
+                    {/* Status management buttons */}
+                    <div className="flex space-x-2 flex-wrap gap-2">
+                      {release.status === 'draft' && (
+                        <>
+                          <button
+                            onClick={() => handleUpdateRelease(release.id, 'ready')}
+                            className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400"
+                          >
+                            Mark Ready
+                          </button>
+                          <button
+                            onClick={() => handlePublishRelease(release.id)}
+                            className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
+                          >
+                            Publish
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRelease(release.id)}
+                            className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                      {release.status === 'ready' && (
+                        <>
+                          <button
+                            onClick={() => handlePublishRelease(release.id)}
+                            className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400"
+                          >
+                            Publish
+                          </button>
+                          <button
+                            onClick={() => handleUpdateRelease(release.id, 'draft')}
+                            className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300"
+                          >
+                            Back to Draft
+                          </button>
+                        </>
+                      )}
+                      {release.status === 'published' && (
                         <button
-                          onClick={() => handlePublishRelease(release.id)}
-                          className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200"
+                          onClick={() => handleUpdateRelease(release.id, 'archived')}
+                          className="px-3 py-1 text-sm bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400"
                         >
-                          Publish
+                          Archive
                         </button>
-                        <button
-                          onClick={() => handleUpdateRelease(release.id, 'draft')}
-                          className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-                        >
-                          Back to Draft
-                        </button>
-                      </>
-                    )}
-                    {release.status === 'published' && (
-                      <button
-                        onClick={() => handleUpdateRelease(release.id, 'archived')}
-                        className="px-3 py-1 text-sm bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
-                      >
-                        Archive
-                      </button>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
                 {release.release_notes && (

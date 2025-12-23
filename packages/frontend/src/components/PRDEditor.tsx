@@ -32,6 +32,8 @@ export default function PRDEditor({ projectId }: PRDEditorProps) {
     setSaving(true);
     try {
       await artifactsApi.savePRD(projectId, content);
+      // Emit event to notify other components
+      window.dispatchEvent(new CustomEvent('artifactUpdated', { detail: { projectId } }));
     } catch (error) {
       console.error('Failed to save PRD:', error);
       alert('Failed to save PRD');

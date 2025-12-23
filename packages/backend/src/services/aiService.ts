@@ -3,6 +3,9 @@ import { ExecuteAIJobRequest, AIJob, AIProvider, AIMode } from '@devflow-studio/
 import { ProjectRepository } from '../repositories/projectRepository';
 import { ArtifactRepository } from '../repositories/artifactRepository';
 import { TaskRepository } from '../repositories/taskRepository';
+import { RFCRepository } from '../repositories/rfcRepository';
+import { EpicRepository } from '../repositories/epicRepository';
+import { UserFlowRepository } from '../repositories/userFlowRepository';
 import { readFile } from '../utils/fileSystem';
 import path from 'path';
 
@@ -11,12 +14,18 @@ export class AIService {
   private projectRepo: ProjectRepository;
   private artifactRepo: ArtifactRepository;
   private taskRepo: TaskRepository;
+  private rfcRepo: RFCRepository;
+  private epicRepo: EpicRepository;
+  private userFlowRepo: UserFlowRepository;
 
   constructor() {
     this.aiJobRepo = new AIJobRepository();
     this.projectRepo = new ProjectRepository();
     this.artifactRepo = new ArtifactRepository();
     this.taskRepo = new TaskRepository();
+    this.rfcRepo = new RFCRepository();
+    this.epicRepo = new EpicRepository();
+    this.userFlowRepo = new UserFlowRepository();
   }
 
   async buildPromptBundle(projectId: string, taskId?: string): Promise<string> {
@@ -53,7 +62,7 @@ export class AIService {
       bundle.push('No Product Requirements Document (PRD) exists for this project. Please create the PRD first for better architecture generation.\n\n');
     }
 
-    // Add Architecture
+    // Add Architecture (if exists - don't fail if it doesn't)
     const architecture = await this.artifactRepo.findByProjectIdAndType(projectId, 'architecture');
     if (architecture) {
       try {
@@ -61,8 +70,11 @@ export class AIService {
         bundle.push('## Architecture Documentation\n');
         bundle.push(archContent);
         bundle.push('\n');
-      } catch (error) {
-        console.warn('Could not read Architecture:', error);
+      } catch (error: any) {
+        // File doesn't exist yet - this is normal for first-time generation
+        if (error.code !== 'ENOENT') {
+          console.warn('Could not read Architecture:', error);
+        }
       }
     }
 
@@ -87,6 +99,80 @@ export class AIService {
       bundle.push('## User Stories\n');
       for (const story of stories) {
         bundle.push(`- **${story.title}**: ${story.description || ''}\n`);
+        if (story.acceptance_criteria && story.acceptance_criteria.length > 0) {
+          bundle.push(`  - Acceptance Criteria: ${story.acceptance_criteria.join(', ')}\n`);
+        }
+      }
+      bundle.push('\n');
+    }
+
+    // Add RFC (most recent approved/draft)
+    const rfcs = await this.rfcRepo.findByProjectId(projectId);
+    if (rfcs.length > 0) {
+      // Use the most recent RFC
+      const rfc = rfcs[0];
+      bundle.push('## RFC (Request for Comments) - Technical Design\n');
+      bundle.push(`**Title**: ${rfc.title}\n`);
+      bundle.push(`**Status**: ${rfc.status}\n`);
+      if (rfc.architecture_type) {
+        bundle.push(`**Architecture Type**: ${rfc.architecture_type}\n`);
+      }
+      bundle.push(`**Content**:\n${rfc.content}\n\n`);
+    }
+
+    // Add Epics and Breakdown Tasks
+    const epics = await this.epicRepo.findByProjectId(projectId);
+    if (epics.length > 0) {
+      bundle.push('## Epics & Breakdown\n');
+      for (const epic of epics) {
+        bundle.push(`### Epic: ${epic.title}\n`);
+        if (epic.description) {
+          bundle.push(`${epic.description}\n`);
+        }
+        if (epic.story_points) {
+          bundle.push(`**Story Points**: ${epic.story_points}\n`);
+        }
+        bundle.push(`**Status**: ${epic.status}\n\n`);
+        
+        // Get tasks for this epic
+        const allTasks = await this.taskRepo.findByProjectId(projectId);
+        const epicTasks = allTasks.filter(t => (t as any).epic_id === epic.id && t.type === 'task');
+        if (epicTasks.length > 0) {
+          bundle.push(`**Tasks (${epicTasks.length}):**\n`);
+          epicTasks
+            .sort((a, b) => ((a as any).breakdown_order || 0) - ((b as any).breakdown_order || 0))
+            .forEach(task => {
+              bundle.push(`- ${(task as any).breakdown_order || ''}. **${task.title}**`);
+              if ((task as any).estimated_days) {
+                bundle.push(` (${(task as any).estimated_days} days)`);
+              }
+              if ((task as any).story_points) {
+                bundle.push(` [${(task as any).story_points} SP]`);
+              }
+              bundle.push('\n');
+              if (task.description) {
+                bundle.push(`  ${task.description}\n`);
+              }
+            });
+          bundle.push('\n');
+        }
+      }
+      bundle.push('\n');
+    }
+
+    // Add Design (User Flows)
+    const userFlows = await this.userFlowRepo.findByProjectId(projectId);
+    if (userFlows.length > 0) {
+      bundle.push('## User Flows & Design\n');
+      for (const flow of userFlows) {
+        bundle.push(`### ${flow.flow_name}\n`);
+        if (flow.description) {
+          bundle.push(`${flow.description}\n`);
+        }
+        if (flow.flow_diagram) {
+          bundle.push(`\n**Flow Diagram (Mermaid):**\n\`\`\`mermaid\n${flow.flow_diagram}\n\`\`\`\n`);
+        }
+        bundle.push('\n');
       }
       bundle.push('\n');
     }
