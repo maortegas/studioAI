@@ -6,18 +6,21 @@ import { Project, Task } from '@devflow-studio/shared';
 import PRDEditor from '../components/PRDEditor';
 import StageTracker from '../components/StageTracker';
 import AIJobRunner from '../components/AIJobRunner';
-import ArchitectureManager from '../components/ArchitectureManager';
+import DesignManager from '../components/DesignManager';
 import UserStoriesManager from '../components/UserStoriesManager';
 import RoadmapView from '../components/RoadmapView';
 import ImplementationDashboard from '../components/ImplementationDashboard';
 import QADashboard from '../components/QADashboard';
 import ReleaseManager from '../components/ReleaseManager';
+import RFCManager from '../components/RFCManager';
+import BreakdownManager from '../components/BreakdownManager';
+import ProjectReviewDashboard from '../components/ProjectReviewDashboard';
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'prd' | 'design' | 'stories' | 'roadmap' | 'implementation' | 'qa' | 'release' | 'stages' | 'tasks' | 'ai'>(
+  const [activeTab, setActiveTab] = useState<'overview' | 'prd' | 'design' | 'stories' | 'rfc' | 'breakdown' | 'roadmap' | 'implementation' | 'qa' | 'release' | 'reviewing' | 'stages' | 'tasks' | 'ai'>(
     'overview'
   );
   const [loading, setLoading] = useState(true);
@@ -69,7 +72,7 @@ export default function ProjectDetail() {
 
       <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
         <nav className="flex space-x-8">
-          {(['overview', 'prd', 'design', 'stories', 'roadmap', 'implementation', 'qa', 'release', 'stages', 'tasks', 'ai'] as const).map((tab) => (
+          {(['overview', 'prd', 'stories', 'design', 'rfc', 'breakdown', 'implementation', 'roadmap', 'qa', 'release', 'reviewing', 'stages', 'tasks', 'ai'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -113,17 +116,23 @@ export default function ProjectDetail() {
 
         {activeTab === 'prd' && <PRDEditor projectId={project.id} />}
 
-        {activeTab === 'design' && <ArchitectureManager projectId={project.id} />}
-
         {activeTab === 'stories' && <UserStoriesManager projectId={project.id} />}
 
-        {activeTab === 'roadmap' && <RoadmapView projectId={project.id} />}
+        {activeTab === 'design' && <DesignManager projectId={project.id} />}
+
+        {activeTab === 'rfc' && <RFCManager projectId={project.id} />}
+
+        {activeTab === 'breakdown' && <BreakdownManager projectId={project.id} />}
 
         {activeTab === 'implementation' && <ImplementationDashboard projectId={project.id} />}
+
+        {activeTab === 'roadmap' && <RoadmapView projectId={project.id} />}
 
         {activeTab === 'qa' && <QADashboard projectId={project.id} />}
 
         {activeTab === 'release' && <ReleaseManager projectId={project.id} />}
+
+        {activeTab === 'reviewing' && <ProjectReviewDashboard projectId={project.id} />}
 
         {activeTab === 'stages' && <StageTracker projectId={project.id} />}
 
