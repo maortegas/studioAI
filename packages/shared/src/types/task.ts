@@ -14,6 +14,12 @@ export interface Task {
   // Additional fields for user stories (stored in description or metadata)
   acceptance_criteria?: string[];
   estimated_effort?: 'Low' | 'Medium' | 'High';
+  // Fields for breakdown and estimation
+  epic_id?: string;
+  estimated_days?: number;
+  breakdown_order?: number;
+  story_points?: number;
+  generated_from_prd?: boolean;
 }
 
 export interface CreateTaskRequest {

@@ -31,20 +31,21 @@ export class CodingSessionService {
    * Create a single coding session for a user story
    */
   async createSession(data: CreateCodingSessionRequest): Promise<CodingSession> {
-    // Verify story exists
+    // Verify task exists (can be either 'story' or 'task' from breakdown)
     const story = await this.taskRepo.findById(data.story_id);
     if (!story) {
-      throw new Error('User story not found');
+      throw new Error('Task not found');
     }
 
-    if (story.type !== 'story') {
-      throw new Error('Task is not a user story');
+    // Allow both user stories and breakdown tasks
+    if (story.type !== 'story' && story.type !== 'task') {
+      throw new Error('Task must be a user story or a breakdown task');
     }
 
-    // Check if session already exists for this story
+    // Check if session already exists for this story/task
     const existingSession = await this.sessionRepo.findByStoryId(data.story_id);
     if (existingSession && existingSession.status !== 'failed') {
-      throw new Error('Coding session already exists for this story');
+      throw new Error(`Coding session already exists for this ${story.type === 'story' ? 'story' : 'task'}`);
     }
 
     // Create coding session first (without AI job)
@@ -143,6 +144,7 @@ export class CodingSessionService {
 
   /**
    * Start implementation for multiple stories
+   * RESPECTS breakdown_order and priority - implements in correct order
    */
   async startImplementation(data: StartImplementationRequest): Promise<CodingSession[]> {
     // Get project to create directory structure
@@ -158,31 +160,50 @@ export class CodingSessionService {
       }
     }
 
+    // Get all tasks and sort by breakdown_order (if available) and priority
+    const tasks = await Promise.all(
+      data.story_ids.map(id => this.taskRepo.findById(id))
+    );
+    
+    // Filter out null tasks and sort by breakdown order and priority
+    const validTasks = tasks
+      .filter((task): task is NonNullable<typeof task> => task !== null)
+      .sort((a, b) => {
+        // First sort by breakdown_order if available (lower order = higher priority)
+        const orderA = (a as any).breakdown_order ?? 9999;
+        const orderB = (b as any).breakdown_order ?? 9999;
+        if (orderA !== orderB) {
+          return orderA - orderB;
+        }
+        // Then sort by priority (higher priority = lower number for sorting, but we want higher first)
+        return (b.priority || 0) - (a.priority || 0);
+      });
+
+    console.log(`[CodingSession] Starting implementation for ${validTasks.length} tasks in order:`);
+    validTasks.forEach((task, index) => {
+      const order = (task as any).breakdown_order ?? 'N/A';
+      console.log(`  ${index + 1}. ${task.title} (breakdown_order: ${order}, priority: ${task.priority || 0})`);
+    });
+
     const sessions: CodingSession[] = [];
 
-    for (const storyId of data.story_ids) {
-      const story = await this.taskRepo.findById(storyId);
-      if (!story) {
-        console.warn(`Story ${storyId} not found, skipping`);
-        continue;
-      }
-
+    for (const task of validTasks) {
       // Auto-assign programmer type based on story context if enabled
       let programmerType: ProgrammerType = 'fullstack';
       if (data.auto_assign) {
-        programmerType = this.detectProgrammerType(story);
+        programmerType = this.detectProgrammerType(task);
       }
 
       try {
         const session = await this.createSession({
           project_id: data.project_id,
-          story_id: storyId,
+          story_id: task.id,
           programmer_type: programmerType,
           test_strategy: data.test_strategy || 'tdd',
         });
         sessions.push(session);
       } catch (error: any) {
-        console.error(`Failed to create session for story ${storyId}:`, error.message);
+        console.error(`Failed to create session for task ${task.id}:`, error.message);
       }
     }
 
@@ -397,15 +418,116 @@ export class CodingSessionService {
    * Build test generation prompt
    */
   private async buildTestGenerationPrompt(story: any, programmerType: ProgrammerType, projectId: string, unitTestsOnly: boolean = true): Promise<string> {
+    // Get full context from prompt bundle (includes PRD, RFC, Breakdown, Design, Stories)
+    const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
+    
     const lines: string[] = [];
 
+    lines.push(promptBundle);
+    lines.push('\n---\n');
     lines.push(`# Test Generation Task: ${story.title}\n`);
     lines.push(`**Programmer Type**: ${programmerType}\n`);
     lines.push(`**Priority**: ${story.priority}\n\n`);
 
+    // Get related User Story and RFC if this is a breakdown task
+    let relatedUserStory: any = null;
+    let relatedRFC: any = null;
+    
+    if (story.type === 'task' && (story as any).epic_id) {
+      // Get epic to find RFC
+      const { EpicRepository } = await import('../repositories/epicRepository');
+      const epicRepo = new EpicRepository();
+      const epic = await epicRepo.findById((story as any).epic_id);
+      
+      if (epic && epic.rfc_id) {
+        // Get RFC
+        const { RFCGeneratorService } = await import('./rfcGeneratorService');
+        const rfcService = new RFCGeneratorService();
+        relatedRFC = await rfcService.getRFCById(epic.rfc_id);
+      }
+      
+      // Try to find related user story through epic
+      // Note: User stories don't have epic_id directly, but breakdown tasks do
+      // We'll search for user stories in the same project that might be related
+      const { Pool } = await import('pg');
+      const pool = (await import('../config/database')).default;
+      const storiesResult = await pool.query(
+        `SELECT t.* FROM tasks t 
+         WHERE t.project_id = $1 
+         AND t.type = 'story'
+         ORDER BY t.priority DESC
+         LIMIT 1`,
+        [projectId]
+      );
+      if (storiesResult.rows.length > 0) {
+        relatedUserStory = storiesResult.rows[0];
+      }
+    } else if (story.type === 'story') {
+      relatedUserStory = story;
+    }
+
+    // Add specific task details if it's a breakdown task
+    if (story.type === 'task' && (story as any).epic_id) {
+      lines.push(`## Breakdown Task Details\n`);
+      lines.push(`**This is a breakdown task from the Epic & Breakdown section above.**\n`);
+      lines.push(`**The task details below are extracted from the Breakdown specifications in the context above.**\n\n`);
+      if ((story as any).breakdown_order) {
+        lines.push(`**Order in Breakdown**: ${(story as any).breakdown_order}\n`);
+      }
+      if ((story as any).estimated_days) {
+        lines.push(`**Estimated Days**: ${(story as any).estimated_days} (from breakdown estimation)\n`);
+      }
+      if ((story as any).story_points) {
+        lines.push(`**Story Points**: ${(story as any).story_points} (from breakdown estimation)\n`);
+      }
+      
+      // Add related User Story information
+      if (relatedUserStory) {
+        lines.push(`\n## Related User Story\n`);
+        lines.push(`**Story**: ${relatedUserStory.title}\n`);
+        if (relatedUserStory.description) {
+          lines.push(`**Description**: ${relatedUserStory.description}\n`);
+        }
+        if (relatedUserStory.acceptance_criteria && Array.isArray(relatedUserStory.acceptance_criteria)) {
+          lines.push(`**Acceptance Criteria**:\n`);
+          relatedUserStory.acceptance_criteria.forEach((ac: any, idx: number) => {
+            const acText = typeof ac === 'string' ? ac : (ac.criterion || ac);
+            lines.push(`  ${idx + 1}. ${acText}\n`);
+          });
+        }
+        lines.push(`\n**CRITICAL**: Tests MUST cover the acceptance criteria above from the related User Story.\n\n`);
+      }
+      
+      // Add related RFC information
+      if (relatedRFC) {
+        lines.push(`## Related RFC (Technical Design)\n`);
+        lines.push(`**RFC**: ${relatedRFC.title}\n`);
+        lines.push(`\n**CRITICAL**: Tests MUST validate RFC specifications (API contracts, database schema, etc.).\n\n`);
+      }
+      
+      lines.push(`\n**CRITICAL**: This task is part of a larger Epic. You MUST:\n`);
+      lines.push(`- Reference the RFC (Technical Design) section above for API contracts, database schema, and architecture\n`);
+      lines.push(`- Reference the Epic & Breakdown section above to understand dependencies and order\n`);
+      lines.push(`- Reference User Flows & Design for UI/UX implementation\n`);
+      lines.push(`- Follow the breakdown order and ensure compatibility with other tasks in the Epic\n`);
+      if (relatedUserStory) {
+        lines.push(`- Cover ALL acceptance criteria from the Related User Story above\n`);
+      }
+      lines.push(`\n`);
+    }
+
     if (story.description) {
-      lines.push(`## User Story\n`);
+      lines.push(`## Task Description\n`);
       lines.push(`${story.description}\n\n`);
+    }
+    
+    // Add acceptance criteria if available
+    if (story.acceptance_criteria && Array.isArray(story.acceptance_criteria) && story.acceptance_criteria.length > 0) {
+      lines.push(`## Acceptance Criteria\n`);
+      story.acceptance_criteria.forEach((criteria: string, index: number) => {
+        lines.push(`${index + 1}. ${criteria}\n`);
+      });
+      lines.push(`\n`);
     }
 
     // Get project info for structure
@@ -425,6 +547,11 @@ export class CodingSessionService {
 
     lines.push(`## Instructions\n`);
     lines.push(`You are a QA engineer. Your task is to generate comprehensive test suites BEFORE implementation.\n\n`);
+    lines.push(`**Context from Above:**\n`);
+    lines.push(`- Review the RFC (Technical Design) section for architecture and API contracts\n`);
+    lines.push(`- Review the Breakdown section to understand the task's place in the larger Epic\n`);
+    lines.push(`- Review User Flows & Design for UI/UX context\n`);
+    lines.push(`- Ensure tests align with acceptance criteria and technical specifications\n\n`);
     
     if (unitTestsOnly) {
       lines.push(`**IMPORTANT: Generate ONLY unit tests. Do NOT generate integration tests, E2E tests, or load tests.**\n\n`);
@@ -484,15 +611,137 @@ export class CodingSessionService {
    * Build implementation prompt based on story, programmer type, and generated tests
    */
   private async buildCodingPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string): Promise<string> {
+    // Get full context from prompt bundle (includes PRD, RFC, Breakdown, Design, Stories)
+    const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
+    
     const lines: string[] = [];
 
+    lines.push(promptBundle);
+    lines.push('\n---\n');
     lines.push(`# Coding Task: ${story.title}\n`);
     lines.push(`**Programmer Type**: ${programmerType}\n`);
     lines.push(`**Priority**: ${story.priority}\n\n`);
 
+    // Get related User Story and RFC if this is a breakdown task
+    let relatedUserStory: any = null;
+    let relatedRFC: any = null;
+    
+    if (story.type === 'task' && (story as any).epic_id) {
+      // Get epic to find RFC
+      const { EpicRepository } = await import('../repositories/epicRepository');
+      const epicRepo = new EpicRepository();
+      const epic = await epicRepo.findById((story as any).epic_id);
+      
+      if (epic && epic.rfc_id) {
+        // Get RFC
+        const { RFCGeneratorService } = await import('./rfcGeneratorService');
+        const rfcService = new RFCGeneratorService();
+        relatedRFC = await rfcService.getRFCById(epic.rfc_id);
+      }
+      
+      // Try to find related user story through epic or task description
+      // Look for stories that might be related to this epic
+      const { Pool } = await import('pg');
+      const pool = (await import('../config/database')).default;
+      const storiesResult = await pool.query(
+        `SELECT t.* FROM tasks t 
+         WHERE t.project_id = $1 
+         AND t.type = 'story' 
+         AND (t.epic_id = $2 OR t.id IN (
+           SELECT id FROM tasks WHERE epic_id = $2
+         ))
+         ORDER BY t.priority DESC
+         LIMIT 1`,
+        [projectId, (story as any).epic_id]
+      );
+      if (storiesResult.rows.length > 0) {
+        relatedUserStory = storiesResult.rows[0];
+      }
+    } else if (story.type === 'story') {
+      // This is already a user story
+      relatedUserStory = story;
+    }
+
+    // Add specific task details if it's a breakdown task
+    if (story.type === 'task' && (story as any).epic_id) {
+      lines.push(`## Breakdown Task Details\n`);
+      lines.push(`**This is a breakdown task from the Epic & Breakdown section above.**\n`);
+      lines.push(`**The task details below are extracted from the Breakdown specifications in the context above.**\n\n`);
+      if ((story as any).breakdown_order) {
+        lines.push(`**Order in Breakdown**: ${(story as any).breakdown_order}\n`);
+      }
+      if ((story as any).estimated_days) {
+        lines.push(`**Estimated Days**: ${(story as any).estimated_days} (from breakdown estimation)\n`);
+      }
+      if ((story as any).story_points) {
+        lines.push(`**Story Points**: ${(story as any).story_points} (from breakdown estimation)\n`);
+      }
+      
+      // Add related User Story information
+      if (relatedUserStory) {
+        lines.push(`\n## Related User Story\n`);
+        lines.push(`**Story**: ${relatedUserStory.title}\n`);
+        if (relatedUserStory.description) {
+          lines.push(`**Description**: ${relatedUserStory.description}\n`);
+        }
+        if (relatedUserStory.acceptance_criteria && Array.isArray(relatedUserStory.acceptance_criteria)) {
+          lines.push(`**Acceptance Criteria**:\n`);
+          relatedUserStory.acceptance_criteria.forEach((ac: any, idx: number) => {
+            const acText = typeof ac === 'string' ? ac : (ac.criterion || ac);
+            lines.push(`  ${idx + 1}. ${acText}\n`);
+          });
+        }
+        lines.push(`\n**CRITICAL**: This breakdown task MUST fulfill the acceptance criteria above from the related User Story.\n\n`);
+      }
+      
+      // Add related RFC information
+      if (relatedRFC) {
+        lines.push(`## Related RFC (Technical Design)\n`);
+        lines.push(`**RFC**: ${relatedRFC.title}\n`);
+        if (relatedRFC.status) {
+          lines.push(`**Status**: ${relatedRFC.status}\n`);
+        }
+        lines.push(`\n**CRITICAL**: This implementation MUST follow the RFC specifications above. The complete RFC content is in the context section.\n\n`);
+      }
+      
+      lines.push(`\n**CRITICAL - Implementation Requirements:**\n`);
+      lines.push(`1. **Breakdown Order**: Implement according to breakdown order ${(story as any).breakdown_order || ''} and respect dependencies\n`);
+      lines.push(`2. **User Story Compliance**: ${relatedUserStory ? 'Fulfill the acceptance criteria from the Related User Story above.' : 'Ensure alignment with related User Stories in the context above.'}\n`);
+      lines.push(`3. **RFC Compliance**: ${relatedRFC ? 'Follow the Related RFC above EXACTLY.' : 'Follow the RFC (Technical Design) section in the context above EXACTLY.'}\n`);
+      lines.push(`   - Use API contracts as specified in RFC\n`);
+      lines.push(`   - Follow database schema from RFC\n`);
+      lines.push(`   - Respect architecture patterns from RFC\n`);
+      lines.push(`4. **Design Alignment**: Follow User Flows & Design section for UI/UX implementation\n`);
+      lines.push(`5. **Priority**: This task has priority ${story.priority || 0} - implement accordingly\n\n`);
+    } else if (story.type === 'story') {
+      // This is a user story being implemented directly
+      lines.push(`## User Story Implementation\n`);
+      lines.push(`**This is a User Story being implemented directly.**\n\n`);
+      
+      // Try to find related RFC
+      const { RFCGeneratorService } = await import('./rfcGeneratorService');
+      const rfcService = new RFCGeneratorService();
+      const rfc = await rfcService.getRFCByProject(projectId);
+      if (rfc) {
+        relatedRFC = rfc;
+        lines.push(`## Related RFC (Technical Design)\n`);
+        lines.push(`**RFC**: ${rfc.title}\n`);
+        lines.push(`\n**CRITICAL**: This implementation MUST follow the RFC specifications above. The complete RFC content is in the context section.\n\n`);
+      }
+    }
+
     if (story.description) {
-      lines.push(`## User Story\n`);
+      lines.push(`## Task Description\n`);
       lines.push(`${story.description}\n\n`);
+    }
+    
+    // Add acceptance criteria if available
+    if (story.acceptance_criteria && Array.isArray(story.acceptance_criteria) && story.acceptance_criteria.length > 0) {
+      lines.push(`## Acceptance Criteria\n`);
+      story.acceptance_criteria.forEach((criteria: string, index: number) => {
+        lines.push(`${index + 1}. ${criteria}\n`);
+      });
+      lines.push(`\n`);
     }
 
     // Get project info for structure
@@ -537,25 +786,31 @@ export class CodingSessionService {
     }
 
     lines.push(`## Instructions\n`);
+    lines.push(`**IMPORTANT - Reference Context Above:**\n`);
+    lines.push(`- Follow the RFC (Technical Design) for architecture, API contracts, and database schema\n`);
+    lines.push(`- Respect User Flows & Design for UI/UX implementation\n`);
+    lines.push(`- Follow the Breakdown specifications and dependencies\n`);
+    lines.push(`- Ensure alignment with all User Stories and their acceptance criteria\n`);
+    lines.push(`- Maintain consistency with Architecture documentation\n\n`);
     
     if (programmerType === 'backend') {
       lines.push(`You are a backend developer. Focus on:`);
-      lines.push(`- Implementing API endpoints and routes`);
-      lines.push(`- Database models and repositories`);
-      lines.push(`- Business logic and services`);
-      lines.push(`- Error handling and validation`);
-      lines.push(`- Following REST/GraphQL best practices\n`);
+      lines.push(`- Implementing API endpoints and routes (as specified in RFC)\n`);
+      lines.push(`- Database models and repositories (following RFC schema)\n`);
+      lines.push(`- Business logic and services\n`);
+      lines.push(`- Error handling and validation\n`);
+      lines.push(`- Following REST/GraphQL best practices and RFC API contracts\n`);
     } else if (programmerType === 'frontend') {
       lines.push(`You are a frontend developer. Focus on:`);
-      lines.push(`- Creating React components`);
-      lines.push(`- Implementing UI/UX designs`);
-      lines.push(`- State management and API integration`);
-      lines.push(`- Responsive design and accessibility`);
+      lines.push(`- Creating React components (following User Flows & Design)\n`);
+      lines.push(`- Implementing UI/UX designs from the Design section\n`);
+      lines.push(`- State management and API integration (using RFC API contracts)\n`);
+      lines.push(`- Responsive design and accessibility\n`);
       lines.push(`- Following modern frontend best practices\n`);
     } else {
       lines.push(`You are a fullstack developer. Implement both:`);
-      lines.push(`- Backend: API endpoints, services, and database operations`);
-      lines.push(`- Frontend: React components and UI implementation`);
+      lines.push(`- Backend: API endpoints, services, and database operations (RFC-aligned)\n`);
+      lines.push(`- Frontend: React components and UI implementation (Design-aligned)\n`);
       lines.push(`- Ensure proper integration between frontend and backend\n`);
     }
 
@@ -572,8 +827,13 @@ export class CodingSessionService {
       lines.push(`3. Ensure code follows the project's architecture and coding standards`);
       lines.push(`4. Write clean, maintainable, and well-documented code`);
     } else {
-      lines.push(`\nImplement this user story following the project's architecture and coding standards.`);
-      lines.push(`Write clean, maintainable, and well-documented code.`);
+      lines.push(`\nImplement this task following:`);
+      lines.push(`- The RFC (Technical Design) specifications above`);
+      lines.push(`- The Architecture documentation`);
+      lines.push(`- User Flows & Design for UI components`);
+      lines.push(`- Breakdown order and dependencies`);
+      lines.push(`- Project's coding standards and best practices`);
+      lines.push(`\nWrite clean, maintainable, and well-documented code that aligns with all context provided above.`);
     }
 
     return lines.join('\n');

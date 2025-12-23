@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { CodingSessionService } from '../services/codingSessionService';
+import { ReviewService } from '../services/reviewService';
 import { CreateCodingSessionRequest, StartImplementationRequest } from '@devflow-studio/shared';
 
 const router = Router();
 const sessionService = new CodingSessionService();
+const reviewService = new ReviewService();
 
 // Create a single coding session
 router.post('/create', async (req: Request, res: Response) => {
@@ -131,6 +133,18 @@ router.post('/:sessionId/retry', async (req: Request, res: Response) => {
     res.json({ session: newSession, message: 'Session retried successfully' });
   } catch (error: any) {
     console.error('Error retrying session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Start review process for a completed session
+router.post('/:sessionId/review', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const result = await reviewService.startReview(sessionId);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error starting review:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -9,4 +9,9 @@ export * from './types/coding-session';
 export * from './types/qa';
 export * from './types/test-suite';
 export * from './types/release';
+export * from './types/prd';
+export * from './types/user-story';
+export * from './types/rfc';
+export * from './types/epic';
+export * from './types/design';
 

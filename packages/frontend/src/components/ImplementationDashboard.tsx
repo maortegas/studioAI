@@ -44,10 +44,13 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
   const loadStories = async () => {
     try {
       const allTasks = await tasksApi.getByProject(projectId);
-      const userStories = allTasks.filter((t: Task) => t.type === 'story');
-      setStories(userStories);
+      // Only include breakdown tasks (tasks with epic_id) for implementation
+      // User stories are used in Breakdown to create these tasks, but implementation
+      // should only work with the granular breakdown tasks
+      const breakdownTasks = allTasks.filter((t: Task) => t.type === 'task' && t.epic_id);
+      setStories(breakdownTasks);
     } catch (error) {
-      console.error('Failed to load stories:', error);
+      console.error('Failed to load breakdown tasks:', error);
     }
   };
 
@@ -63,7 +66,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
 
   const handleStartImplementation = async () => {
     if (selectedStories.size === 0) {
-      showToast('Please select at least one user story', 'error');
+      showToast('Please select at least one breakdown task', 'error');
       return;
     }
 
@@ -133,6 +136,20 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
     }
   };
 
+  const handleStartReview = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!confirm('Start review process? This will execute the code, detect errors, and fix them automatically.')) {
+      return;
+    }
+    try {
+      const result = await codingSessionsApi.startReview(sessionId);
+      showToast('Review process started. The system will execute the code and fix any errors automatically.', 'success');
+      await loadDashboard();
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Failed to start review', 'error');
+    }
+  };
+
   const getStorySession = (storyId: string): CodingSession | undefined => {
     return dashboard?.sessions.find((s) => s.story_id === storyId);
   };
@@ -178,7 +195,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
         <div className="grid grid-cols-5 gap-4">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-blue-500">
             <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.total_stories}</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Total Stories</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Total Tasks</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-4 border-t-4 border-green-500">
             <div className="text-2xl font-bold text-gray-900 dark:text-white">{dashboard.completed_stories}</div>
@@ -342,13 +359,27 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
       )}
 
       {/* Start Implementation */}
+      {availableStories.length === 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50 p-6">
+          <div className="text-center py-8">
+            <p className="text-gray-600 dark:text-gray-400 mb-2">
+              No breakdown tasks available for implementation.
+            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-500">
+              Please complete the <strong>Breakdown</strong> phase first. Breakdown tasks are created from User Stories and RFC specifications.
+            </p>
+          </div>
+        </div>
+      )}
       {availableStories.length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
           <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex justify-between items-center">
             <div>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Start Implementation</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Select user stories to assign to AI developers
+                Select breakdown tasks to assign to AI developers. 
+                These tasks come from the Breakdown phase and are prioritized based on user stories and RFC specifications.
+                <strong className="text-gray-700 dark:text-gray-300"> Note: User stories are used in Breakdown to create these tasks, but implementation works only with breakdown tasks.</strong>
               </p>
             </div>
             <button
@@ -433,14 +464,36 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                     className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="flex-1">
-                    <div className="font-medium text-gray-900 dark:text-white">{story.title}</div>
+                    <div className="flex items-center space-x-2">
+                      <div className="font-medium text-gray-900 dark:text-white">{story.title}</div>
+                      {story.epic_id && (
+                        <span className="px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 rounded">
+                          Breakdown Task
+                        </span>
+                      )}
+                    </div>
                     {story.description && (
                       <div className="text-sm text-gray-500 dark:text-gray-400 mt-1 line-clamp-1">
                         {story.description}
                       </div>
                     )}
+                    {story.breakdown_order && (
+                      <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                        Order: {story.breakdown_order}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center space-x-2">
+                    {story.story_points && (
+                      <span className="px-2 py-1 text-xs bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 rounded">
+                        {story.story_points} SP
+                      </span>
+                    )}
+                    {story.estimated_days && (
+                      <span className="px-2 py-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 rounded">
+                        {story.estimated_days} days
+                      </span>
+                    )}
                     <span className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
                       Priority: {story.priority}
                     </span>
@@ -483,6 +536,18 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                           <div className="text-xs text-gray-500 dark:text-gray-400">
                             {session.completed_at && new Date(session.completed_at).toLocaleString()}
                           </div>
+                          {session.status === 'completed' && (
+                            <button
+                              onClick={(e) => handleStartReview(session.id, e)}
+                              className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-600 dark:bg-green-500 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition"
+                              title="Review and fix errors in generated code"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span>Review & Fix</span>
+                            </button>
+                          )}
                           {session.status === 'failed' && (
                             <button
                               onClick={(e) => handleRetrySession(session.id, e)}

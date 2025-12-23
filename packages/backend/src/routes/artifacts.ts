@@ -33,8 +33,16 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.get('/:id/content', async (req: Request, res: Response) => {
   try {
     const content = await artifactService.readArtifactFile(req.params.id);
-    res.json({ content });
+    res.json({ content: content || '' });
   } catch (error: any) {
+    // If artifact not found, return 404
+    if (error.message === 'Artifact not found') {
+      return res.status(404).json({ error: error.message });
+    }
+    // For file not found (ENOENT), return empty content instead of error
+    if (error.code === 'ENOENT' || error.message.includes('ENOENT')) {
+      return res.json({ content: '' });
+    }
     res.status(500).json({ error: error.message });
   }
 });

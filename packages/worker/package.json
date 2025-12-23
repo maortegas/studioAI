@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "./dist/worker.js",
   "scripts": {
-    "dev": "tsx --watch src/worker.ts",
+    "dev": "tsx src/worker.ts",
+    "dev:watch": "tsx --watch src/worker.ts",
     "dev:no-watch": "tsx src/worker.ts",
     "build": "tsc",
     "start": "node dist/worker.js",
@@ -12,9 +13,11 @@
   "dependencies": {
     "@devflow-studio/shared": "*",
     "dotenv": "^17.2.3",
+    "express": "^4.18.2",
     "pg": "^8.11.3"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^20.10.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"

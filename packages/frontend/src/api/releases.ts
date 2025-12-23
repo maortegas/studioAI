@@ -34,3 +34,36 @@ export async function publishRelease(id: string): Promise<Release> {
 export async function deleteRelease(id: string): Promise<void> {
   await apiClient.delete(`/releases/${id}`);
 }
+
+export interface GenerateDeploymentRequest {
+  release_id?: string;
+  version?: string;
+  database_url?: string;
+  api_port?: number;
+  frontend_port?: number;
+  node_env?: string;
+}
+
+export interface GenerateDeploymentResponse {
+  message: string;
+  files: {
+    docker_compose_path: string;
+    readme_path: string;
+    package_json_path: string;
+    env_example_path: string;
+    dockerfile_backend_path: string;
+    dockerfile_frontend_path: string;
+  };
+}
+
+export async function generateDeployment(
+  projectId: string,
+  environment: 'staging' | 'production',
+  config?: GenerateDeploymentRequest
+): Promise<GenerateDeploymentResponse> {
+  const response = await apiClient.post(
+    `/releases/project/${projectId}/deploy/${environment}`,
+    config || {}
+  );
+  return response.data;
+}
