@@ -1,8 +1,37 @@
 export type ProgrammerType = 'backend' | 'frontend' | 'fullstack';
 
-export type CodingSessionStatus = 'pending' | 'generating_tests' | 'tests_generated' | 'running' | 'completed' | 'failed' | 'paused';
+export type CodingSessionStatus = 
+  | 'pending' 
+  | 'generating_tests' 
+  | 'tests_generated' 
+  | 'running' 
+  | 'completed' 
+  | 'failed' 
+  | 'paused'
+  | 'reviewing'
+  | 'tdd_red'      // RED phase: Test is failing (expected)
+  | 'tdd_green'    // GREEN phase: Implementing minimal code to pass test
+  | 'tdd_refactor'; // REFACTOR phase: Improving code while keeping tests passing
 
 export type TestStrategy = 'tdd' | 'after' | 'none'; // TDD: tests before coding, after: unit tests after coding, none: no testing
+
+// TDD Cycle state interface
+export interface TDDCycle {
+  test_index: number;           // Current test being worked on (0-based)
+  phase: 'red' | 'green' | 'refactor';  // Current phase in TDD cycle
+  current_test: string;         // Current test code
+  current_test_name: string;    // Name/description of current test
+  tests_passed: number;         // Number of tests passing
+  total_tests: number;          // Total tests to implement
+  all_tests: Array<{            // All tests for this session
+    name: string;
+    code: string;
+    status: 'pending' | 'red' | 'green' | 'refactored';
+    attempts: number;
+  }>;
+  refactor_count: number;       // Number of refactors done
+  stuck_count: number;          // Number of times stuck in GREEN phase
+}
 
 export interface CodingSession {
   id: string;
@@ -20,6 +49,7 @@ export interface CodingSession {
   output?: string;
   tests_output?: string; // Generated tests content
   error?: string;
+  tdd_cycle?: TDDCycle; // TDD cycle state for strict TDD mode
   started_at?: Date;
   completed_at?: Date;
   created_at: Date;

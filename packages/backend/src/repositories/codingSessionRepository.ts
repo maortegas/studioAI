@@ -115,6 +115,10 @@ export class CodingSessionRepository {
       fields.push(`tests_output = $${paramCount++}`);
       values.push((data as any).tests_output);
     }
+    if ((data as any).tdd_cycle !== undefined) {
+      fields.push(`tdd_cycle = $${paramCount++}::jsonb`);
+      values.push(JSON.stringify((data as any).tdd_cycle));
+    }
 
     values.push(id);
 
