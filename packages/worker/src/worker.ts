@@ -963,8 +963,11 @@ async function processJob(jobId: string) {
             // Mark batch tests as green (with bounds checking)
             const batchEnd = Math.min(batchStart + batchSize, tddCycle.total_tests, tddCycle.all_tests.length);
             for (let i = batchStart; i < batchEnd; i++) {
-              if (tddCycle.all_tests[i]) {
-                tddCycle.all_tests[i].status = 'green';
+              const test = tddCycle.all_tests[i];
+              if (test && typeof test === 'object') {
+                test.status = 'green';
+              } else {
+                console.warn(`[Worker] Test at index ${i} is invalid: ${typeof test}`);
               }
             }
             
