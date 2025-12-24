@@ -999,8 +999,15 @@ async function processJob(jobId: string) {
             // Mark refactored tests (with bounds checking)
             const maxIndex = Math.min(testsCompleted, tddCycle.all_tests.length);
             for (let i = 0; i < maxIndex; i++) {
-              if (tddCycle.all_tests[i] && tddCycle.all_tests[i].status === 'green') {
-                tddCycle.all_tests[i].status = 'refactored';
+              const test = tddCycle.all_tests[i];
+              if (test && typeof test === 'object' && test.status === 'green') {
+                test.status = 'refactored';
+              } else if (!test) {
+                console.warn(`[Worker] Test at index ${i} is undefined or null`);
+              } else if (typeof test !== 'object') {
+                console.warn(`[Worker] Test at index ${i} is not an object: ${typeof test}`);
+              } else if (!test.status) {
+                console.warn(`[Worker] Test at index ${i} does not have status property`);
               }
             }
             tddCycle.refactor_count++;
