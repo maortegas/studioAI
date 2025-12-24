@@ -1017,9 +1017,18 @@ export class CodingSessionService {
     const { Pool } = await import('pg');
     const pool = (await import('../config/database')).default;
 
+    // Validate all_tests array exists
+    if (!tddCycle.all_tests || !Array.isArray(tddCycle.all_tests)) {
+      throw new Error(`TDD cycle all_tests is not an array. Session may be corrupted.`);
+    }
+
     const batchStart = tddCycle.test_index;
     const batchEnd = Math.min(batchStart + tddCycle.batch_size, tddCycle.total_tests);
     const batchTests = tddCycle.all_tests.slice(batchStart, batchEnd);
+
+    if (batchTests.length === 0) {
+      throw new Error(`No tests found in batch range ${batchStart}-${batchEnd}. Total tests: ${tddCycle.all_tests.length}`);
+    }
 
     console.log(`[TDD-GREEN-BATCH] Implementing tests ${batchStart + 1}-${batchEnd}/${tddCycle.total_tests}`);
 
@@ -1029,10 +1038,12 @@ export class CodingSessionService {
     const story = await this.taskRepo.findById(session.story_id);
     if (!story) throw new Error('Story not found');
 
-    // Mark batch tests as green
-    for (let i = batchStart; i < batchEnd; i++) {
-      tddCycle.all_tests[i].status = 'green';
-      tddCycle.all_tests[i].attempts++;
+    // Mark batch tests as green (with bounds checking)
+    for (let i = batchStart; i < batchEnd && i < tddCycle.all_tests.length; i++) {
+      if (tddCycle.all_tests[i]) {
+        tddCycle.all_tests[i].status = 'green';
+        tddCycle.all_tests[i].attempts = (tddCycle.all_tests[i].attempts || 0) + 1;
+      }
     }
 
     // Update progress
@@ -1106,12 +1117,20 @@ export class CodingSessionService {
     const story = await this.taskRepo.findById(session.story_id);
     if (!story) throw new Error('Story not found');
 
+    // Validate all_tests array exists
+    if (!tddCycle.all_tests || !Array.isArray(tddCycle.all_tests)) {
+      console.warn(`[TDD-REFACTOR] all_tests is not an array, initializing...`);
+      tddCycle.all_tests = [];
+    }
+
     // Update TDD cycle to REFACTOR phase
     tddCycle.phase = 'refactor';
     
     // Mark all completed tests as refactored (not just one test)
-    for (let i = 0; i < testsCompleted && i < tddCycle.all_tests.length; i++) {
-      if (tddCycle.all_tests[i].status === 'green') {
+    // Use Math.min to ensure we don't exceed array bounds
+    const maxIndex = Math.min(testsCompleted, tddCycle.all_tests.length);
+    for (let i = 0; i < maxIndex; i++) {
+      if (tddCycle.all_tests[i] && tddCycle.all_tests[i].status === 'green') {
         tddCycle.all_tests[i].status = 'refactored';
       }
     }
@@ -1173,9 +1192,20 @@ export class CodingSessionService {
 
     const tddCycle: TDDCycle = result.rows[0].tdd_cycle;
 
+    // Validate all_tests array exists
+    if (!tddCycle.all_tests || !Array.isArray(tddCycle.all_tests)) {
+      throw new Error(`TDD cycle all_tests is not an array. Session may be corrupted.`);
+    }
+
+    // Validate batch_size exists
+    if (!tddCycle.batch_size || tddCycle.batch_size <= 0) {
+      console.warn(`[TDD] batch_size not set, defaulting to 3`);
+      tddCycle.batch_size = 3;
+    }
+
     // Move to next batch
     tddCycle.test_index += tddCycle.batch_size;
-    tddCycle.tests_passed += tddCycle.batch_size;
+    tddCycle.tests_passed = Math.min(tddCycle.tests_passed + tddCycle.batch_size, tddCycle.total_tests);
 
     console.log(`[TDD] Batch completed. Progress: ${tddCycle.test_index}/${tddCycle.total_tests} tests`);
 
@@ -1208,7 +1238,25 @@ export class CodingSessionService {
     // Continue with next batch
     const batchStart = tddCycle.test_index;
     const batchEnd = Math.min(batchStart + tddCycle.batch_size, tddCycle.total_tests);
-    tddCycle.current_batch_tests = tddCycle.all_tests.slice(batchStart, batchEnd).map(t => t.name);
+    
+    // Validate we have tests in the batch range
+    if (batchStart >= tddCycle.all_tests.length) {
+      console.warn(`[TDD] Batch start ${batchStart} exceeds all_tests length ${tddCycle.all_tests.length}. Completing session.`);
+      await pool.query(
+        `UPDATE coding_sessions SET 
+         status = $1, 
+         tdd_cycle = $2::jsonb,
+         progress = $3,
+         implementation_progress = $4,
+         test_progress = $5,
+         completed_at = NOW()
+         WHERE id = $6`,
+        ['completed', JSON.stringify(tddCycle), 100, 50, 50, sessionId]
+      );
+      return;
+    }
+    
+    tddCycle.current_batch_tests = tddCycle.all_tests.slice(batchStart, batchEnd).map(t => t?.name || 'Unknown').filter(Boolean);
     tddCycle.phase = 'green';
 
     await pool.query(
