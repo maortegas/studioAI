@@ -1137,15 +1137,17 @@ export class CodingSessionService {
     
     tddCycle.refactor_count++;
 
+    // Calculate progress: 50% (implementation) + up to 30% (refactoring) = max 80%
+    // Ensure it doesn't exceed 100
+    const progress = Math.min(100, Math.floor(50 + (testsCompleted / tddCycle.total_tests) * 30));
+    
     await pool.query(
       `UPDATE coding_sessions SET 
        status = $1, 
        tdd_cycle = $2::jsonb,
        progress = $3
        WHERE id = $4`,
-      ['tdd_refactor', JSON.stringify(tddCycle),
-       Math.floor(50 + (tddCycle.test_index / tddCycle.total_tests) * 30), // 50-80% range
-       sessionId]
+      ['tdd_refactor', JSON.stringify(tddCycle), progress, sessionId]
     );
 
     // Build REFACTOR phase prompt
