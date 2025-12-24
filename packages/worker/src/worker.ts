@@ -954,9 +954,18 @@ async function processJob(jobId: string) {
             // Reset stuck count on success
             tddCycle.stuck_count = 0;
             
-            // Mark batch tests as green
-            for (let i = batchStart; i < Math.min(batchStart + batchSize, tddCycle.total_tests); i++) {
-              tddCycle.all_tests[i].status = 'green';
+            // Validate all_tests array exists
+            if (!tddCycle.all_tests || !Array.isArray(tddCycle.all_tests)) {
+              console.error('[Worker] all_tests is not an array, cannot mark batch tests as green');
+              throw new Error('TDD cycle all_tests is not an array');
+            }
+            
+            // Mark batch tests as green (with bounds checking)
+            const batchEnd = Math.min(batchStart + batchSize, tddCycle.total_tests, tddCycle.all_tests.length);
+            for (let i = batchStart; i < batchEnd; i++) {
+              if (tddCycle.all_tests[i]) {
+                tddCycle.all_tests[i].status = 'green';
+              }
             }
             
             await pool.query(
