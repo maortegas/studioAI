@@ -9,28 +9,28 @@ export type CodingSessionStatus =
   | 'failed' 
   | 'paused'
   | 'reviewing'
-  | 'tdd_red'      // RED phase: Test is failing (expected)
-  | 'tdd_green'    // GREEN phase: Implementing minimal code to pass test
-  | 'tdd_refactor'; // REFACTOR phase: Improving code while keeping tests passing
+  | 'tdd_green'    // GREEN phase: Implementing code to pass tests (batch)
+  | 'tdd_refactor'; // REFACTOR phase: Strategic refactoring at key points
 
 export type TestStrategy = 'tdd' | 'after' | 'none'; // TDD: tests before coding, after: unit tests after coding, none: no testing
 
-// TDD Cycle state interface
+// TDD Cycle state interface (optimized for batch processing)
 export interface TDDCycle {
-  test_index: number;           // Current test being worked on (0-based)
-  phase: 'red' | 'green' | 'refactor';  // Current phase in TDD cycle
-  current_test: string;         // Current test code
-  current_test_name: string;    // Name/description of current test
+  test_index: number;           // Current test batch starting index (0-based)
+  phase: 'green' | 'refactor';  // Current phase (no RED - tests obviously fail before implementation)
+  batch_size: number;           // Number of tests to implement per batch (default: 3)
+  current_batch_tests: string[];// Test names in current batch
   tests_passed: number;         // Number of tests passing
   total_tests: number;          // Total tests to implement
   all_tests: Array<{            // All tests for this session
     name: string;
     code: string;
-    status: 'pending' | 'red' | 'green' | 'refactored';
+    status: 'pending' | 'green' | 'refactored';
     attempts: number;
   }>;
-  refactor_count: number;       // Number of refactors done
+  refactor_count: number;       // Number of strategic refactors done
   stuck_count: number;          // Number of times stuck in GREEN phase
+  context_bundle?: string;      // Cached prompt bundle (loaded once, reused)
 }
 
 export interface CodingSession {

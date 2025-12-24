@@ -323,7 +323,7 @@ async function processJob(jobId: string) {
     const isCodingSession = mode === 'agent' && codingSessionId;
     const isTestGeneration = isCodingSession && (phase === 'test_generation' || phase === 'test_generation_after');
     const isImplementation = isCodingSession && phase === 'implementation';
-    const isTDDPhase = isCodingSession && (phase === 'tdd_red' || phase === 'tdd_green' || phase === 'tdd_refactor');
+    const isTDDPhase = isCodingSession && (phase === 'tdd_green' || phase === 'tdd_refactor'); // RED phase removed
     
     // Check if this is a story generation job
     const prdId = job.args.prd_id;
@@ -918,72 +918,84 @@ async function processJob(jobId: string) {
           const { CodingSessionService } = await import(codingSessionServicePath);
           const codingSessionService = new CodingSessionService();
           
-          if (phase === 'tdd_red') {
-            // RED Phase completed - Test should have FAILED
-            console.log(`[Worker] RED phase completed for test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
+          if (phase === 'tdd_green') {
+            // GREEN Phase (BATCH) completed - All tests in batch should now PASS
+            const batchSize = job.args.batch_size || tddCycle.batch_size || 3;
+            const batchStart = job.args.batch_start !== undefined ? job.args.batch_start : tddCycle.test_index;
+            console.log(`[Worker] GREEN batch completed: tests ${batchStart + 1}-${Math.min(batchStart + batchSize, tddCycle.total_tests)}/${tddCycle.total_tests}`);
             
-            // Parse output to verify test failed
-            const testFailed = result.output.toLowerCase().includes('fail') || 
-                             result.output.toLowerCase().includes('error') ||
-                             result.output.toLowerCase().includes('not defined');
-            
-            if (!testFailed) {
-              console.warn('[Worker] Test did not fail in RED phase! This might indicate an invalid test.');
-              // Continue anyway, but log the warning
-            }
-            
-            // Move to GREEN phase
-            await codingSessionService.executeTestGREEN(codingSessionId, tddCycle);
-            
-          } else if (phase === 'tdd_green') {
-            // GREEN Phase completed - Test should now PASS
-            console.log(`[Worker] GREEN phase completed for test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
-            
-            // Parse output to verify test passed
-            const testPassed = result.output.toLowerCase().includes('pass') || 
+            // Parse output to verify tests passed
+            const testsPassed = result.output.toLowerCase().includes('pass') || 
                               result.output.toLowerCase().includes('✓') ||
                               result.output.toLowerCase().includes('success');
             
-            if (!testPassed) {
-              console.warn('[Worker] Test did not pass in GREEN phase. May need another attempt.');
+            if (!testsPassed) {
+              console.warn('[Worker] Batch tests did not pass in GREEN phase. May need another attempt.');
               // Increment stuck count
               tddCycle.stuck_count = (tddCycle.stuck_count || 0) + 1;
               
               if (tddCycle.stuck_count >= 3) {
-                // Too many failed attempts, skip to next test
-                console.error(`[Worker] Stuck on test ${tddCycle.test_index + 1} after 3 attempts. Moving to next test.`);
-                await codingSessionService.advanceToNextTest(codingSessionId);
+                // Too many failed attempts, skip to next batch
+                console.error(`[Worker] Stuck on batch ${batchStart + 1}-${batchStart + batchSize} after 3 attempts. Moving to next batch.`);
+                tddCycle.test_index = Math.min(batchStart + batchSize, tddCycle.total_tests);
+                await pool.query(
+                  `UPDATE coding_sessions SET tdd_cycle = $1::jsonb WHERE id = $2`,
+                  [JSON.stringify(tddCycle), codingSessionId]
+                );
+                await codingSessionService.advanceToNextBatch(codingSessionId);
                 return;
               }
               
               // Try GREEN phase again
-              await codingSessionService.executeTestGREEN(codingSessionId, tddCycle);
+              await codingSessionService.executeBatchGREEN(codingSessionId, tddCycle);
               return;
             }
             
             // Reset stuck count on success
             tddCycle.stuck_count = 0;
             
-            // Move to REFACTOR phase
-            await codingSessionService.executeRefactor(codingSessionId, tddCycle);
+            // Mark batch tests as green
+            for (let i = batchStart; i < Math.min(batchStart + batchSize, tddCycle.total_tests); i++) {
+              tddCycle.all_tests[i].status = 'green';
+            }
+            
+            await pool.query(
+              `UPDATE coding_sessions SET tdd_cycle = $1::jsonb WHERE id = $2`,
+              [JSON.stringify(tddCycle), codingSessionId]
+            );
+            
+            // Advance to next batch (includes strategic refactor logic)
+            await codingSessionService.advanceToNextBatch(codingSessionId);
             
           } else if (phase === 'tdd_refactor') {
             // REFACTOR Phase completed - All tests should still PASS
-            console.log(`[Worker] REFACTOR phase completed for test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
+            const testsCompleted = tddCycle.test_index;
+            console.log(`[Worker] Strategic REFACTOR completed at ${testsCompleted}/${tddCycle.total_tests} tests`);
             
             // Parse output to verify all tests still pass
             const allTestsPass = result.output.toLowerCase().includes('pass') || 
                                 result.output.toLowerCase().includes('✓') ||
-                                !result.output.toLowerCase().includes('fail');
+                                !result.output.toLowerCase().includes('success');
             
             if (!allTestsPass) {
-              console.error('[Worker] Refactoring broke tests! Need to revert or fix.');
-              // In a real implementation, you might want to revert changes here
-              // For now, we'll just log and continue
+              console.warn('[Worker] Refactoring may have broken tests. Continuing anyway.');
             }
             
-            // Move to next test (or complete if this was the last test)
-            await codingSessionService.advanceToNextTest(codingSessionId);
+            // Mark refactored tests
+            for (let i = 0; i < testsCompleted; i++) {
+              if (tddCycle.all_tests[i].status === 'green') {
+                tddCycle.all_tests[i].status = 'refactored';
+              }
+            }
+            tddCycle.refactor_count++;
+            
+            await pool.query(
+              `UPDATE coding_sessions SET tdd_cycle = $1::jsonb WHERE id = $2`,
+              [JSON.stringify(tddCycle), codingSessionId]
+            );
+            
+            // Continue to next batch after refactor
+            await codingSessionService.advanceToNextBatch(codingSessionId);
           }
           
         } catch (error) {

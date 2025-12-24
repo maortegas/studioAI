@@ -26,9 +26,8 @@ ALTER TABLE coding_sessions
     'reviewing', 
     'generating_tests', 
     'tests_generated',
-    'tdd_red',      -- RED phase: Test is failing (expected)
-    'tdd_green',   -- GREEN phase: Implementing minimal code to pass test
-    'tdd_refactor' -- REFACTOR phase: Improving code while keeping tests passing
+    'tdd_green',   -- GREEN phase: Implementing code to pass tests (batch)
+    'tdd_refactor' -- REFACTOR phase: Strategic refactoring at key points
   ));
 
 -- ============================================
@@ -43,5 +42,5 @@ CREATE INDEX IF NOT EXISTS idx_coding_sessions_tdd_cycle
 -- Step 4: Add comment for documentation
 -- ============================================
 COMMENT ON COLUMN coding_sessions.tdd_cycle IS 
-  'TDD cycle state: {test_index, phase, current_test, current_test_name, tests_passed, total_tests, all_tests[], refactor_count, stuck_count}';
+  'Optimized TDD cycle state: {test_index, phase, batch_size, current_batch_tests[], tests_passed, total_tests, all_tests[], refactor_count, stuck_count, context_bundle}';
 
