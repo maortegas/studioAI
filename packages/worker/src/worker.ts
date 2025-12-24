@@ -972,6 +972,12 @@ async function processJob(jobId: string) {
             const testsCompleted = tddCycle.test_index;
             console.log(`[Worker] Strategic REFACTOR completed at ${testsCompleted}/${tddCycle.total_tests} tests`);
             
+            // Validate all_tests array exists
+            if (!tddCycle.all_tests || !Array.isArray(tddCycle.all_tests)) {
+              console.error('[Worker] all_tests is not an array, cannot mark tests as refactored');
+              throw new Error('TDD cycle all_tests is not an array');
+            }
+            
             // Parse output to verify all tests still pass
             const allTestsPass = result.output.toLowerCase().includes('pass') || 
                                 result.output.toLowerCase().includes('✓') ||
@@ -981,9 +987,10 @@ async function processJob(jobId: string) {
               console.warn('[Worker] Refactoring may have broken tests. Continuing anyway.');
             }
             
-            // Mark refactored tests
-            for (let i = 0; i < testsCompleted; i++) {
-              if (tddCycle.all_tests[i].status === 'green') {
+            // Mark refactored tests (with bounds checking)
+            const maxIndex = Math.min(testsCompleted, tddCycle.all_tests.length);
+            for (let i = 0; i < maxIndex; i++) {
+              if (tddCycle.all_tests[i] && tddCycle.all_tests[i].status === 'green') {
                 tddCycle.all_tests[i].status = 'refactored';
               }
             }
