@@ -1091,13 +1091,14 @@ export class CodingSessionService {
   }
 
   /**
-   * REFACTOR Phase: Improve code while keeping tests passing
+   * REFACTOR Phase: Strategic refactoring of all completed tests
    */
   async executeRefactor(sessionId: string, tddCycle: TDDCycle): Promise<void> {
     const { Pool } = await import('pg');
     const pool = (await import('../config/database')).default;
 
-    console.log(`[TDD-REFACTOR] Refactoring code after test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
+    const testsCompleted = tddCycle.test_index;
+    console.log(`[TDD-REFACTOR] Strategic refactoring at ${testsCompleted}/${tddCycle.total_tests} tests (${Math.floor((testsCompleted / tddCycle.total_tests) * 100)}%)`);
 
     const session = await this.sessionRepo.findById(sessionId);
     if (!session) throw new Error('Session not found');
@@ -1107,7 +1108,14 @@ export class CodingSessionService {
 
     // Update TDD cycle to REFACTOR phase
     tddCycle.phase = 'refactor';
-    tddCycle.all_tests[tddCycle.test_index].status = 'refactored';
+    
+    // Mark all completed tests as refactored (not just one test)
+    for (let i = 0; i < testsCompleted && i < tddCycle.all_tests.length; i++) {
+      if (tddCycle.all_tests[i].status === 'green') {
+        tddCycle.all_tests[i].status = 'refactored';
+      }
+    }
+    
     tddCycle.refactor_count++;
 
     await pool.query(
