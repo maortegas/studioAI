@@ -564,7 +564,15 @@ export class CodingSessionService {
       lines.push(`${structure.description}\n\n`);
       lines.push(`**IMPORTANT: Save test files in the appropriate directory:**\n`);
       const testPath = this.structureService.getRecommendedPath('', 'test', project.tech_stack);
-      lines.push(`- Unit tests: Save in \`${testPath}/unit/\` directory\n`);
+      
+      // Get story title for file naming (traditional TDD: one file per functionality)
+      const storyTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const testFileName = `${storyTitle}.test.js`;
+      
+      lines.push(`- **Unit tests: Save in \`tests/unit/${testFileName}\`**\n`);
+      lines.push(`- **CRITICAL:** All tests for this functionality must be in the SAME file: \`tests/unit/${testFileName}\`\n`);
+      lines.push(`- If the file already exists, ADD your tests to it (do NOT overwrite)\n`);
+      lines.push(`- This follows traditional TDD: iterate on the same test file\n`);
       lines.push(`- Integration tests: Save in \`${testPath}/integration/\` directory (if generating integration tests)\n`);
       lines.push(`- E2E tests: Save in \`tests/e2e/\` directory (if generating e2e tests)\n`);
       lines.push(`- Follow the naming convention: \`*.test.js\` or \`*.spec.js\`\n\n`);
@@ -1373,6 +1381,19 @@ export class CodingSessionService {
       lines.push(`**Description:** ${story.description}\n\n`);
     }
     
+    // Get story title for test file path (traditional TDD: one file per functionality)
+    const storyTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const testFilePath = `tests/unit/${storyTitle}.test.js`;
+    
+    lines.push(`## Existing Test File\n\n`);
+    lines.push(`**CRITICAL - Traditional TDD Structure:**\n`);
+    lines.push(`- Tests already exist in: \`${testFilePath}\`\n`);
+    lines.push(`- Do NOT create new test files\n`);
+    lines.push(`- Work with the existing test file: \`${testFilePath}\`\n`);
+    lines.push(`- Implement code to make ALL tests in this file pass\n`);
+    lines.push(`- If you need to add more test cases, add them to the SAME file\n`);
+    lines.push(`- This follows traditional TDD: iterate on the same test file until reasonable coverage\n\n`);
+    
     const batchNum = Math.floor(tddCycle.test_index / tddCycle.batch_size) + 1;
     lines.push(`## Tests to Implement (Batch ${batchNum}/${Math.ceil(tddCycle.total_tests / tddCycle.batch_size)})\n\n`);
     lines.push(`Implement MINIMAL code to make ALL ${batchTests.length} tests pass:\n\n`);
@@ -1435,7 +1456,19 @@ export class CodingSessionService {
     lines.push(promptBundle);
     lines.push(`\n---\n\n`);
     
+    // Get story title for test file path (traditional TDD: one file per functionality)
+    const storyTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const testFilePath = `tests/unit/${storyTitle}.test.js`;
+    
     lines.push(`# TDD REFACTOR PHASE: Improve Code Quality\n\n`);
+    
+    lines.push(`## Existing Test File\n\n`);
+    lines.push(`**CRITICAL - Traditional TDD Structure:**\n`);
+    lines.push(`- Tests exist in: \`${testFilePath}\`\n`);
+    lines.push(`- All tests in \`${testFilePath}\` must continue passing after refactoring\n`);
+    lines.push(`- Do NOT modify the test file unless necessary for refactoring\n`);
+    lines.push(`- This follows traditional TDD: refactor code while keeping all tests green\n\n`);
+    
     lines.push(`## Context\n\n`);
     lines.push(`**Tests Completed:** ${tddCycle.test_index + 1}/${tddCycle.total_tests}\n`);
     lines.push(`**Refactor Count:** ${tddCycle.refactor_count}\n\n`);
@@ -1443,7 +1476,7 @@ export class CodingSessionService {
     lines.push(`## REFACTOR Phase Objective\n\n`);
     lines.push(`**CRITICAL - REFACTOR Phase Requirements:**\n`);
     lines.push(`1. Improve code quality without changing behavior\n`);
-    lines.push(`2. ALL tests MUST continue to pass\n`);
+    lines.push(`2. ALL tests in \`${testFilePath}\` MUST continue to pass\n`);
     lines.push(`3. Apply clean code principles\n`);
     lines.push(`4. Remove duplication\n`);
     lines.push(`5. Improve names, structure, and readability\n\n`);

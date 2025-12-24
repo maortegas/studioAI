@@ -3506,16 +3506,29 @@ async function parseAndSaveTestSuites(
   const testSuites: any[] = [];
   
   try {
-    // Get project to find base_path
-    const projectResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
+    // Get project to find base_path and tech_stack
+    const projectResult = await pool.query('SELECT base_path, tech_stack FROM projects WHERE id = $1', [projectId]);
     if (projectResult.rows.length === 0) {
       throw new Error('Project not found');
     }
     const project = projectResult.rows[0];
     
-    // Create tests directory for this session
-    const testsDir = path.join(project.base_path, 'tests', `session_${codingSessionId}`);
-    await fs.mkdir(testsDir, { recursive: true });
+    // Get story/task title for file naming
+    let storyTitle = 'default';
+    if (storyId) {
+      const storyResult = await pool.query('SELECT title FROM tasks WHERE id = $1', [storyId]);
+      if (storyResult.rows.length > 0) {
+        storyTitle = storyResult.rows[0].title;
+      }
+    }
+    
+    // Sanitize title for filename
+    const sanitizedTitle = storyTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    
+    // Use traditional TDD structure: tests/unit/ (not session-specific folders)
+    const testPath = 'tests'; // Standard test directory
+    const unitTestDir = path.join(project.base_path, testPath, 'unit');
+    await fs.mkdir(unitTestDir, { recursive: true });
     
     // Parse test code from AI output
     // Look for code blocks with test code
@@ -3576,35 +3589,57 @@ async function parseAndSaveTestSuites(
     }
     
     // Create test suite records in database and save files
+    // Use single file per functionality (based on story title)
+    const fileName = `${sanitizedTitle}.test.js`;
+    const filePath = path.join(unitTestDir, fileName);
+    
+    // Combine all test code into one file
+    let combinedTestCode = '';
     for (const [typeKey, suiteData] of testSuitesByType.entries()) {
-      const [testType] = typeKey.split('_');
-      const fileName = `${typeKey}.test.js`;
-      const filePath = path.join(testsDir, fileName);
-      
-      // Save test file
-      await fs.writeFile(filePath, suiteData.code, 'utf8');
-      
-      // Create test suite in database
-      const suiteResult = await pool.query(
-        `INSERT INTO test_suites (project_id, coding_session_id, story_id, name, description, test_type, status, file_path, test_code, generated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [
-          projectId,
-          codingSessionId,
-          storyId,
-          suiteData.name,
-          `Generated ${testType} tests for coding session ${codingSessionId}`,
-          testType as 'unit' | 'integration' | 'e2e',
-          'ready',
-          `tests/session_${codingSessionId}/${fileName}`,
-          suiteData.code,
-          new Date()
-        ]
-      );
-      
-      testSuites.push(suiteResult.rows[0]);
+      if (combinedTestCode) {
+        combinedTestCode += '\n\n';
+      }
+      combinedTestCode += suiteData.code;
     }
+    
+    // If file exists, append tests (traditional TDD: iterate on same file)
+    let finalTestCode = combinedTestCode;
+    try {
+      const existingContent = await fs.readFile(filePath, 'utf8');
+      finalTestCode = existingContent + '\n\n' + combinedTestCode;
+      console.log(`[Worker] Appending tests to existing file: ${filePath}`);
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+      // File doesn't exist, create new one
+      console.log(`[Worker] Creating new test file: ${filePath}`);
+    }
+    
+    // Save test file
+    await fs.writeFile(filePath, finalTestCode, 'utf8');
+    
+    // Create test suite in database (one suite per file)
+    const [testType] = testSuitesByType.keys().next().value.split('_');
+    const suiteResult = await pool.query(
+      `INSERT INTO test_suites (project_id, coding_session_id, story_id, name, description, test_type, status, file_path, test_code, generated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [
+        projectId,
+        codingSessionId,
+        storyId,
+        `${sanitizedTitle}_tests`,
+        `Generated ${testType} tests for ${storyTitle}`,
+        testType as 'unit' | 'integration' | 'e2e',
+        'ready',
+        `tests/unit/${fileName}`,
+        finalTestCode,
+        new Date()
+      ]
+    );
+    
+    testSuites.push(suiteResult.rows[0]);
     
     console.log(`[Worker] Created ${testSuites.length} test suite(s) for coding session ${codingSessionId}`);
   } catch (error: any) {

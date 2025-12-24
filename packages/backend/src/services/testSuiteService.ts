@@ -71,6 +71,7 @@ export class TestSuiteService {
 
   /**
    * Save test code to file system
+   * For TDD: uses traditional structure (tests/unit/) with one file per functionality
    */
   async saveTestCodeToFile(suiteId: string, testCode: string): Promise<string> {
     const suite = await this.testSuiteRepo.findById(suiteId);
@@ -83,27 +84,56 @@ export class TestSuiteService {
       throw new Error('Project not found');
     }
 
-    // Determine file path based on test type and coding session
-    const testDir = path.join(project.base_path, 'tests');
-    if (suite.coding_session_id) {
-      const sessionDir = path.join(testDir, `session_${suite.coding_session_id}`);
-      await fs.mkdir(sessionDir, { recursive: true });
+    // For TDD (when coding_session_id exists), use traditional structure: tests/unit/
+    if (suite.coding_session_id && suite.story_id) {
+      // Get story/task title for file naming
+      const { Pool } = await import('pg');
+      const pool = (await import('../config/database')).default;
+      const storyResult = await pool.query('SELECT title FROM tasks WHERE id = $1', [suite.story_id]);
       
-      const fileName = `${suite.test_type}_${suite.name.replace(/\s+/g, '_')}.test.js`;
-      const filePath = path.join(sessionDir, fileName);
-      await fs.writeFile(filePath, testCode, 'utf8');
+      let storyTitle = 'default';
+      if (storyResult.rows.length > 0) {
+        storyTitle = storyResult.rows[0].title;
+      }
+      
+      // Sanitize title for filename
+      const sanitizedTitle = storyTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const fileName = `${sanitizedTitle}.test.js`;
+      
+      // Use traditional TDD structure: tests/unit/
+      const unitTestDir = path.join(project.base_path, 'tests', 'unit');
+      await fs.mkdir(unitTestDir, { recursive: true });
+      
+      const filePath = path.join(unitTestDir, fileName);
+      
+      // If file exists, append tests (traditional TDD: iterate on same file)
+      let finalTestCode = testCode;
+      try {
+        const existingContent = await fs.readFile(filePath, 'utf8');
+        finalTestCode = existingContent + '\n\n' + testCode;
+        console.log(`[TestSuiteService] Appending tests to existing file: ${filePath}`);
+      } catch (error: any) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
+        // File doesn't exist, create new one
+        console.log(`[TestSuiteService] Creating new test file: ${filePath}`);
+      }
+      
+      await fs.writeFile(filePath, finalTestCode, 'utf8');
       
       // Update suite with file path
       await this.testSuiteRepo.update(suiteId, {
-        file_path: `tests/session_${suite.coding_session_id}/${fileName}`,
-        test_code: testCode,
+        file_path: `tests/unit/${fileName}`,
+        test_code: finalTestCode,
         status: 'ready',
         generated_at: new Date(),
       });
       
       return filePath;
     } else {
-      // General test file
+      // General test file (non-TDD)
+      const testDir = path.join(project.base_path, 'tests');
       await fs.mkdir(testDir, { recursive: true });
       const fileName = `${suite.test_type}_${suite.name.replace(/\s+/g, '_')}.test.js`;
       const filePath = path.join(testDir, fileName);
