@@ -1003,14 +1003,27 @@ async function processJob(jobId: string) {
             const maxIndex = Math.min(testsCompleted, tddCycle.all_tests.length);
             for (let i = 0; i < maxIndex; i++) {
               const test = tddCycle.all_tests[i];
-              if (test && typeof test === 'object' && test.status === 'green') {
+              
+              // Comprehensive validation before accessing properties
+              if (!test) {
+                console.warn(`[Worker] Test at index ${i} is undefined or null, skipping`);
+                continue;
+              }
+              
+              if (typeof test !== 'object') {
+                console.warn(`[Worker] Test at index ${i} is not an object: ${typeof test}, skipping`);
+                continue;
+              }
+              
+              // Check if status property exists before accessing
+              if (!('status' in test)) {
+                console.warn(`[Worker] Test at index ${i} does not have status property, skipping`);
+                continue;
+              }
+              
+              // Now safe to access test.status
+              if (test.status === 'green') {
                 test.status = 'refactored';
-              } else if (!test) {
-                console.warn(`[Worker] Test at index ${i} is undefined or null`);
-              } else if (typeof test !== 'object') {
-                console.warn(`[Worker] Test at index ${i} is not an object: ${typeof test}`);
-              } else if (!test.status) {
-                console.warn(`[Worker] Test at index ${i} does not have status property`);
               }
             }
             tddCycle.refactor_count++;
