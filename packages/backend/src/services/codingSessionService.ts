@@ -1139,7 +1139,22 @@ export class CodingSessionService {
 
     // Calculate progress: 50% (implementation) + up to 30% (refactoring) = max 80%
     // Ensure it doesn't exceed 100
-    const progress = Math.min(100, Math.floor(50 + (testsCompleted / tddCycle.total_tests) * 30));
+    // Validate inputs to prevent division by zero or invalid calculations
+    if (!tddCycle.total_tests || tddCycle.total_tests <= 0) {
+      console.error(`[TDD-REFACTOR] Invalid total_tests: ${tddCycle.total_tests}`);
+      throw new Error(`Invalid total_tests: ${tddCycle.total_tests}`);
+    }
+    
+    const progressRatio = Math.min(1, testsCompleted / tddCycle.total_tests); // Cap at 1.0
+    const calculatedProgress = Math.floor(50 + progressRatio * 30);
+    const progress = Math.min(100, Math.max(0, calculatedProgress)); // Ensure 0-100 range
+    
+    console.log(`[TDD-REFACTOR] Progress calculation: testsCompleted=${testsCompleted}, total_tests=${tddCycle.total_tests}, ratio=${progressRatio}, calculated=${calculatedProgress}, final=${progress}`);
+    
+    if (progress < 0 || progress > 100) {
+      console.error(`[TDD-REFACTOR] Invalid progress value: ${progress}. Clamping to valid range.`);
+      throw new Error(`Progress calculation error: ${progress} is outside valid range [0-100]`);
+    }
     
     await pool.query(
       `UPDATE coding_sessions SET 
