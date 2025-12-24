@@ -319,10 +319,11 @@ async function processJob(jobId: string) {
 
     // Check if this is a coding session job
     const codingSessionId = job.args.coding_session_id;
-    const phase = job.args.phase; // 'test_generation', 'test_generation_after', 'implementation', or 'story_generation'
+    const phase = job.args.phase; // 'test_generation', 'test_generation_after', 'implementation', 'tdd_red', 'tdd_green', 'tdd_refactor', or 'story_generation'
     const isCodingSession = mode === 'agent' && codingSessionId;
     const isTestGeneration = isCodingSession && (phase === 'test_generation' || phase === 'test_generation_after');
     const isImplementation = isCodingSession && phase === 'implementation';
+    const isTDDPhase = isCodingSession && (phase === 'tdd_red' || phase === 'tdd_green' || phase === 'tdd_refactor');
     
     // Check if this is a story generation job
     const prdId = job.args.prd_id;
@@ -596,58 +597,96 @@ async function processJob(jobId: string) {
                 console.error('[Worker] Error executing test suites:', testError);
               }
             } else {
-              // TDD: Test generation BEFORE implementation - save tests and start implementation
-              await pool.query(
-                'UPDATE coding_sessions SET status = $1, test_progress = $2, progress = $3, tests_output = $4 WHERE id = $5',
-                ['tests_generated', 50, 50, result.output, codingSessionId]
-              );
+              // TDD: Test generation BEFORE implementation
+              const tddMode = job.args?.tdd_mode; // Check if strict TDD mode is enabled
               
-              await pool.query(
-                'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-                [codingSessionId, 'tests_generated', JSON.stringify({ 
-                  tests_output: result.output, 
-                  test_suites: testSuites.map(ts => ts.id),
-                  message: `Generated ${testSuites.length} unit test suites successfully` 
-                })]
-              );
-              
-              console.log(`[Worker] Generated ${testSuites.length} unit test suites for coding session ${codingSessionId}`);
-              
-              // Now create implementation job
-              const projectResult = await pool.query('SELECT base_path, name, tech_stack FROM projects WHERE id = $1', [session.project_id]);
-              const project = projectResult.rows[0];
-              const storyResult = await pool.query('SELECT title, description, priority FROM tasks WHERE id = $1', [session.story_id]);
-              const story = storyResult.rows[0];
-              
-              // Build implementation prompt with generated tests
-              const implPrompt = await buildImplementationPrompt(project, story, session.programmer_type, result.output);
-              
-              const implJob = await pool.query(
-                `INSERT INTO ai_jobs (project_id, provider, command, args, status)
-                 VALUES ($1, $2, $3, $4, $5)
-                 RETURNING *`,
-                [
-                  session.project_id,
-                  'cursor',
-                  'cursor',
-                  JSON.stringify({
-                    mode: 'agent',
-                    prompt: implPrompt,
-                    project_path: project.base_path,
-                    coding_session_id: codingSessionId,
-                    phase: 'implementation',
-                  }),
-                  'pending'
-                ]
-              );
-              
-              // Update session with implementation job ID
-              await pool.query(
-                'UPDATE coding_sessions SET implementation_job_id = $1, ai_job_id = $2 WHERE id = $3',
-                [implJob.rows[0].id, implJob.rows[0].id, codingSessionId]
-              );
-              
-              console.log(`[Worker] Implementation job ${implJob.rows[0].id} created for session ${codingSessionId}`);
+              if (tddMode === 'strict') {
+                // STRICT TDD: Initialize Red-Green-Refactor cycle
+                console.log(`[Worker] Initializing strict TDD cycle for session ${codingSessionId}`);
+                
+                // Parse generated tests from AI output
+                const parsedTests = await parseGeneratedTests(result.output);
+                
+                if (parsedTests.length === 0) {
+                  console.error('[Worker] No tests found in AI output. Cannot initialize TDD cycle.');
+                  await pool.query(
+                    'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+                    ['failed', 'No tests generated', codingSessionId]
+                  );
+                  return;
+                }
+                
+                // Initialize TDD cycle via CodingSessionService
+                try {
+                  // Import CodingSessionService dynamically
+                  const codingSessionServicePath = path.join(__dirname, '../../backend/src/services/codingSessionService');
+                  const { CodingSessionService } = await import(codingSessionServicePath);
+                  const codingSessionService = new CodingSessionService();
+                  
+                  await codingSessionService.initializeTDDCycle(codingSessionId, parsedTests);
+                  
+                  console.log(`[Worker] TDD cycle initialized with ${parsedTests.length} tests. Starting RED phase.`);
+                } catch (error) {
+                  console.error('[Worker] Error initializing TDD cycle:', error);
+                  await pool.query(
+                    'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+                    ['failed', `TDD initialization failed: ${error}`, codingSessionId]
+                  );
+                }
+              } else {
+                // LEGACY TDD: Save tests and start implementation (old behavior)
+                await pool.query(
+                  'UPDATE coding_sessions SET status = $1, test_progress = $2, progress = $3, tests_output = $4 WHERE id = $5',
+                  ['tests_generated', 50, 50, result.output, codingSessionId]
+                );
+                
+                await pool.query(
+                  'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                  [codingSessionId, 'tests_generated', JSON.stringify({ 
+                    tests_output: result.output, 
+                    test_suites: testSuites.map(ts => ts.id),
+                    message: `Generated ${testSuites.length} unit test suites successfully` 
+                  })]
+                );
+                
+                console.log(`[Worker] Generated ${testSuites.length} unit test suites for coding session ${codingSessionId}`);
+                
+                // Now create implementation job
+                const projectResult = await pool.query('SELECT base_path, name, tech_stack FROM projects WHERE id = $1', [session.project_id]);
+                const project = projectResult.rows[0];
+                const storyResult = await pool.query('SELECT title, description, priority FROM tasks WHERE id = $1', [session.story_id]);
+                const story = storyResult.rows[0];
+                
+                // Build implementation prompt with generated tests
+                const implPrompt = await buildImplementationPrompt(project, story, session.programmer_type, result.output);
+                
+                const implJob = await pool.query(
+                  `INSERT INTO ai_jobs (project_id, provider, command, args, status)
+                   VALUES ($1, $2, $3, $4, $5)
+                   RETURNING *`,
+                  [
+                    session.project_id,
+                    'cursor',
+                    'cursor',
+                    JSON.stringify({
+                      mode: 'agent',
+                      prompt: implPrompt,
+                      project_path: project.base_path,
+                      coding_session_id: codingSessionId,
+                      phase: 'implementation',
+                    }),
+                    'pending'
+                  ]
+                );
+                
+                // Update session with implementation job ID
+                await pool.query(
+                  'UPDATE coding_sessions SET implementation_job_id = $1, ai_job_id = $2 WHERE id = $3',
+                  [implJob.rows[0].id, implJob.rows[0].id, codingSessionId]
+                );
+                
+                console.log(`[Worker] Implementation job ${implJob.rows[0].id} created for session ${codingSessionId}`);
+              }
             }
           }
         } catch (error) {
@@ -850,6 +889,109 @@ async function processJob(jobId: string) {
           }
         } catch (error) {
           console.error('[Worker] Error completing coding session:', error);
+        }
+      } else if (isTDDPhase) {
+        // Handle TDD Red-Green-Refactor phases
+        try {
+          console.log(`[Worker] Processing TDD phase: ${phase} for session ${codingSessionId}`);
+          
+          // Get TDD cycle state
+          const sessionResult = await pool.query(
+            'SELECT tdd_cycle, project_id, story_id FROM coding_sessions WHERE id = $1',
+            [codingSessionId]
+          );
+          
+          if (sessionResult.rows.length === 0) {
+            throw new Error('Coding session not found');
+          }
+          
+          const tddCycle = sessionResult.rows[0].tdd_cycle;
+          const projectId = sessionResult.rows[0].project_id;
+          const storyId = sessionResult.rows[0].story_id;
+          
+          if (!tddCycle) {
+            throw new Error('TDD cycle not initialized');
+          }
+          
+          // Import CodingSessionService dynamically
+          const codingSessionServicePath = path.join(__dirname, '../../backend/src/services/codingSessionService');
+          const { CodingSessionService } = await import(codingSessionServicePath);
+          const codingSessionService = new CodingSessionService();
+          
+          if (phase === 'tdd_red') {
+            // RED Phase completed - Test should have FAILED
+            console.log(`[Worker] RED phase completed for test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
+            
+            // Parse output to verify test failed
+            const testFailed = result.output.toLowerCase().includes('fail') || 
+                             result.output.toLowerCase().includes('error') ||
+                             result.output.toLowerCase().includes('not defined');
+            
+            if (!testFailed) {
+              console.warn('[Worker] Test did not fail in RED phase! This might indicate an invalid test.');
+              // Continue anyway, but log the warning
+            }
+            
+            // Move to GREEN phase
+            await codingSessionService.executeTestGREEN(codingSessionId, tddCycle);
+            
+          } else if (phase === 'tdd_green') {
+            // GREEN Phase completed - Test should now PASS
+            console.log(`[Worker] GREEN phase completed for test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
+            
+            // Parse output to verify test passed
+            const testPassed = result.output.toLowerCase().includes('pass') || 
+                              result.output.toLowerCase().includes('✓') ||
+                              result.output.toLowerCase().includes('success');
+            
+            if (!testPassed) {
+              console.warn('[Worker] Test did not pass in GREEN phase. May need another attempt.');
+              // Increment stuck count
+              tddCycle.stuck_count = (tddCycle.stuck_count || 0) + 1;
+              
+              if (tddCycle.stuck_count >= 3) {
+                // Too many failed attempts, skip to next test
+                console.error(`[Worker] Stuck on test ${tddCycle.test_index + 1} after 3 attempts. Moving to next test.`);
+                await codingSessionService.advanceToNextTest(codingSessionId);
+                return;
+              }
+              
+              // Try GREEN phase again
+              await codingSessionService.executeTestGREEN(codingSessionId, tddCycle);
+              return;
+            }
+            
+            // Reset stuck count on success
+            tddCycle.stuck_count = 0;
+            
+            // Move to REFACTOR phase
+            await codingSessionService.executeRefactor(codingSessionId, tddCycle);
+            
+          } else if (phase === 'tdd_refactor') {
+            // REFACTOR Phase completed - All tests should still PASS
+            console.log(`[Worker] REFACTOR phase completed for test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
+            
+            // Parse output to verify all tests still pass
+            const allTestsPass = result.output.toLowerCase().includes('pass') || 
+                                result.output.toLowerCase().includes('✓') ||
+                                !result.output.toLowerCase().includes('fail');
+            
+            if (!allTestsPass) {
+              console.error('[Worker] Refactoring broke tests! Need to revert or fix.');
+              // In a real implementation, you might want to revert changes here
+              // For now, we'll just log and continue
+            }
+            
+            // Move to next test (or complete if this was the last test)
+            await codingSessionService.advanceToNextTest(codingSessionId);
+          }
+          
+        } catch (error) {
+          console.error(`[Worker] Error processing TDD phase ${phase}:`, error);
+          await pool.query(
+            'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+            ['failed', `TDD ${phase} failed: ${error}`, codingSessionId]
+          );
         }
       }
       
@@ -3883,6 +4025,105 @@ async function pollJobs() {
   // Poll again after 2 seconds (or 5 if at capacity)
   const pollDelay = activeJobs >= MAX_CONCURRENT_JOBS ? 5000 : 2000;
   setTimeout(pollJobs, pollDelay);
+}
+
+/**
+ * Parse generated tests from AI output for TDD cycle
+ * Extracts test names and test code from the AI response
+ */
+async function parseGeneratedTests(output: string): Promise<Array<{name: string; code: string}>> {
+  const tests: Array<{name: string; code: string}> = [];
+  
+  try {
+    // Try to parse as JSON first (if AI returns structured JSON)
+    const jsonMatch = output.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[1]);
+      if (Array.isArray(parsed)) {
+        return parsed.map((t: any) => ({
+          name: t.name || t.title || t.test_name || 'Unnamed test',
+          code: t.code || t.test_code || t.test || ''
+        }));
+      }
+    }
+    
+    // If not JSON, try to extract tests from code blocks
+    // Pattern 1: Test blocks with names as comments
+    const testBlockPattern = /(?:\/\/|#)\s*Test:\s*(.+?)\n([\s\S]*?)(?=(?:\/\/|#)\s*Test:|$)/gi;
+    let match;
+    
+    while ((match = testBlockPattern.exec(output)) !== null) {
+      tests.push({
+        name: match[1].trim(),
+        code: match[2].trim()
+      });
+    }
+    
+    // Pattern 2: it() or test() blocks (Jest/Mocha style)
+    if (tests.length === 0) {
+      const itPattern = /(?:it|test)\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(?:async\s*)?\([\s\S]*?\}\s*\)/gi;
+      while ((match = itPattern.exec(output)) !== null) {
+        tests.push({
+          name: match[1].trim(),
+          code: match[0].trim()
+        });
+      }
+    }
+    
+    // Pattern 3: def test_*() blocks (Python pytest style)
+    if (tests.length === 0) {
+      const pytestPattern = /def\s+(test_[^(]+)\s*\([^)]*\):\s*([\s\S]*?)(?=\ndef\s+|$)/gi;
+      while ((match = pytestPattern.exec(output)) !== null) {
+        tests.push({
+          name: match[1].replace(/_/g, ' ').trim(),
+          code: `def ${match[1]}${match[0].substring(match[0].indexOf('('))}`
+        });
+      }
+    }
+    
+    // Pattern 4: @Test annotations (Java JUnit style)
+    if (tests.length === 0) {
+      const junitPattern = /@Test\s+(?:public\s+)?void\s+([^(]+)\s*\([^)]*\)\s*\{([\s\S]*?)\}/gi;
+      while ((match = junitPattern.exec(output)) !== null) {
+        tests.push({
+          name: match[1].replace(/([A-Z])/g, ' $1').trim(),
+          code: match[0].trim()
+        });
+      }
+    }
+    
+    // If still no tests found, try to split by describe/context blocks
+    if (tests.length === 0) {
+      const describePattern = /describe\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(?:async\s*)?\(\s*\)\s*=>\s*\{([\s\S]*?)\n\s*\}\s*\)/gi;
+      while ((match = describePattern.exec(output)) !== null) {
+        tests.push({
+          name: match[1].trim(),
+          code: match[0].trim()
+        });
+      }
+    }
+    
+    console.log(`[Worker] Parsed ${tests.length} tests from AI output`);
+    
+    // If no structured tests found, return a single test with all output
+    if (tests.length === 0) {
+      console.warn('[Worker] Could not parse structured tests. Using entire output as single test.');
+      tests.push({
+        name: 'Generated Test Suite',
+        code: output
+      });
+    }
+    
+  } catch (error) {
+    console.error('[Worker] Error parsing tests:', error);
+    // Return entire output as fallback
+    tests.push({
+      name: 'Generated Test Suite',
+      code: output
+    });
+  }
+  
+  return tests;
 }
 
 // Helper function to parse roadmap milestones from AI output
