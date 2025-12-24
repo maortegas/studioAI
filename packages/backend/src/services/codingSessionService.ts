@@ -12,6 +12,24 @@ import {
   TestStrategy
 } from '@devflow-studio/shared';
 
+// TDD Cycle interface for strict TDD implementation
+interface TDDCycle {
+  test_index: number;           // Current test being worked on (0-based)
+  phase: 'red' | 'green' | 'refactor';  // Current phase in TDD cycle
+  current_test: string;         // Current test code
+  current_test_name: string;    // Name/description of current test
+  tests_passed: number;         // Number of tests passing
+  total_tests: number;          // Total tests to implement
+  all_tests: Array<{            // All tests for this session
+    name: string;
+    code: string;
+    status: 'pending' | 'red' | 'green' | 'refactored';
+    attempts: number;
+  }>;
+  refactor_count: number;       // Number of refactors done
+  stuck_count: number;          // Number of times stuck in GREEN phase
+}
+
 export class CodingSessionService {
   private sessionRepo: CodingSessionRepository;
   private taskRepo: TaskRepository;
@@ -721,8 +739,9 @@ export class CodingSessionService {
       // Try to find related RFC
       const { RFCGeneratorService } = await import('./rfcGeneratorService');
       const rfcService = new RFCGeneratorService();
-      const rfc = await rfcService.getRFCByProject(projectId);
-      if (rfc) {
+      const rfcs = await rfcService.getRFCsByProject(projectId);
+      if (rfcs && rfcs.length > 0) {
+        const rfc = rfcs[0]; // Use first RFC
         relatedRFC = rfc;
         lines.push(`## Related RFC (Technical Design)\n`);
         lines.push(`**RFC**: ${rfc.title}\n`);
@@ -901,5 +920,482 @@ export class CodingSessionService {
     if (hasFrontend) return 'frontend';
     
     return 'fullstack'; // Default
+  }
+
+  /**
+   * Initialize TDD cycle after tests are generated
+   * Starts with first test in RED phase
+   */
+  async initializeTDDCycle(sessionId: string, generatedTests: Array<{name: string; code: string}>): Promise<void> {
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    if (generatedTests.length === 0) {
+      throw new Error('No tests generated for TDD cycle');
+    }
+
+    // Initialize TDD cycle state
+    const tddCycle: TDDCycle = {
+      test_index: 0,
+      phase: 'red',
+      current_test: generatedTests[0].code,
+      current_test_name: generatedTests[0].name,
+      tests_passed: 0,
+      total_tests: generatedTests.length,
+      all_tests: generatedTests.map(t => ({
+        name: t.name,
+        code: t.code,
+        status: 'pending' as const,
+        attempts: 0
+      })),
+      refactor_count: 0,
+      stuck_count: 0
+    };
+
+    // Mark first test as RED
+    tddCycle.all_tests[0].status = 'red';
+
+    // Save TDD cycle state
+    await pool.query(
+      `UPDATE coding_sessions SET 
+       status = $1, 
+       tdd_cycle = $2::jsonb,
+       test_progress = $3
+       WHERE id = $4`,
+      ['tdd_red', JSON.stringify(tddCycle), 10, sessionId]
+    );
+
+    console.log(`[TDD] Initialized cycle for session ${sessionId} with ${generatedTests.length} tests. Starting RED phase for test: ${generatedTests[0].name}`);
+
+    // Create job to execute test in RED phase (should fail)
+    await this.executeTestRED(sessionId, tddCycle);
+  }
+
+  /**
+   * RED Phase: Execute current test and verify it FAILS
+   */
+  async executeTestRED(sessionId: string, tddCycle: TDDCycle): Promise<void> {
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    console.log(`[TDD-RED] Executing test ${tddCycle.test_index + 1}/${tddCycle.total_tests}: ${tddCycle.current_test_name}`);
+
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) throw new Error('Story not found');
+
+    // Build RED phase prompt: Execute test and verify it fails
+    const redPrompt = await this.buildREDPhasePrompt(session.project_id, story, tddCycle);
+
+    // Create AI job for RED phase verification
+    const redJob = await this.aiService.createAIJob({
+      project_id: session.project_id,
+      task_id: session.story_id,
+      provider: 'cursor',
+      mode: 'agent',
+      prompt: redPrompt,
+    });
+
+    await pool.query(
+      `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ 
+        coding_session_id: sessionId, 
+        phase: 'tdd_red',
+        test_index: tddCycle.test_index,
+        test_name: tddCycle.current_test_name
+      }), redJob.id]
+    );
+
+    console.log(`[TDD-RED] Created RED phase job ${redJob.id} for session ${sessionId}`);
+  }
+
+  /**
+   * GREEN Phase: Implement MINIMAL code to make current test pass
+   */
+  async executeTestGREEN(sessionId: string, tddCycle: TDDCycle): Promise<void> {
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    console.log(`[TDD-GREEN] Implementing code for test ${tddCycle.test_index + 1}/${tddCycle.total_tests}: ${tddCycle.current_test_name}`);
+
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) throw new Error('Story not found');
+
+    // Update TDD cycle to GREEN phase
+    tddCycle.phase = 'green';
+    tddCycle.all_tests[tddCycle.test_index].status = 'green';
+    tddCycle.all_tests[tddCycle.test_index].attempts++;
+
+    await pool.query(
+      `UPDATE coding_sessions SET 
+       status = $1, 
+       tdd_cycle = $2::jsonb,
+       implementation_progress = $3
+       WHERE id = $4`,
+      ['tdd_green', JSON.stringify(tddCycle), 
+       Math.floor((tddCycle.test_index / tddCycle.total_tests) * 50), // 0-50% for implementation
+       sessionId]
+    );
+
+    // Build GREEN phase prompt: Implement MINIMAL code
+    const greenPrompt = await this.buildGREENPhasePrompt(session.project_id, story, tddCycle);
+
+    // Create AI job for GREEN phase
+    const greenJob = await this.aiService.createAIJob({
+      project_id: session.project_id,
+      task_id: session.story_id,
+      provider: 'cursor',
+      mode: 'agent',
+      prompt: greenPrompt,
+    });
+
+    await pool.query(
+      `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ 
+        coding_session_id: sessionId, 
+        phase: 'tdd_green',
+        test_index: tddCycle.test_index,
+        test_name: tddCycle.current_test_name,
+        attempt: tddCycle.all_tests[tddCycle.test_index].attempts
+      }), greenJob.id]
+    );
+
+    console.log(`[TDD-GREEN] Created GREEN phase job ${greenJob.id} for session ${sessionId}`);
+  }
+
+  /**
+   * REFACTOR Phase: Improve code while keeping tests passing
+   */
+  async executeRefactor(sessionId: string, tddCycle: TDDCycle): Promise<void> {
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    console.log(`[TDD-REFACTOR] Refactoring code after test ${tddCycle.test_index + 1}/${tddCycle.total_tests}`);
+
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) throw new Error('Session not found');
+
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) throw new Error('Story not found');
+
+    // Update TDD cycle to REFACTOR phase
+    tddCycle.phase = 'refactor';
+    tddCycle.all_tests[tddCycle.test_index].status = 'refactored';
+    tddCycle.refactor_count++;
+
+    await pool.query(
+      `UPDATE coding_sessions SET 
+       status = $1, 
+       tdd_cycle = $2::jsonb,
+       progress = $3
+       WHERE id = $4`,
+      ['tdd_refactor', JSON.stringify(tddCycle),
+       Math.floor(50 + (tddCycle.test_index / tddCycle.total_tests) * 30), // 50-80% range
+       sessionId]
+    );
+
+    // Build REFACTOR phase prompt
+    const refactorPrompt = await this.buildREFACTORPhasePrompt(session.project_id, story, tddCycle);
+
+    // Create AI job for REFACTOR phase
+    const refactorJob = await this.aiService.createAIJob({
+      project_id: session.project_id,
+      task_id: session.story_id,
+      provider: 'cursor',
+      mode: 'agent',
+      prompt: refactorPrompt,
+    });
+
+    await pool.query(
+      `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ 
+        coding_session_id: sessionId, 
+        phase: 'tdd_refactor',
+        test_index: tddCycle.test_index,
+        refactor_count: tddCycle.refactor_count
+      }), refactorJob.id]
+    );
+
+    console.log(`[TDD-REFACTOR] Created REFACTOR phase job ${refactorJob.id} for session ${sessionId}`);
+  }
+
+  /**
+   * Advance to next test in TDD cycle
+   */
+  async advanceToNextTest(sessionId: string): Promise<void> {
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    const result = await pool.query(
+      'SELECT tdd_cycle FROM coding_sessions WHERE id = $1',
+      [sessionId]
+    );
+
+    if (!result.rows[0] || !result.rows[0].tdd_cycle) {
+      throw new Error('No TDD cycle found for session');
+    }
+
+    const tddCycle: TDDCycle = result.rows[0].tdd_cycle;
+
+    // Move to next test
+    tddCycle.test_index++;
+    tddCycle.tests_passed++;
+
+    if (tddCycle.test_index >= tddCycle.total_tests) {
+      // All tests completed!
+      console.log(`[TDD] All ${tddCycle.total_tests} tests completed for session ${sessionId}. Marking as complete.`);
+      
+      await pool.query(
+        `UPDATE coding_sessions SET 
+         status = $1, 
+         tdd_cycle = $2::jsonb,
+         progress = $3,
+         implementation_progress = $4,
+         test_progress = $5,
+         completed_at = NOW()
+         WHERE id = $6`,
+        ['completed', JSON.stringify(tddCycle), 100, 100, 100, sessionId]
+      );
+
+      return;
+    }
+
+    // Initialize next test
+    tddCycle.phase = 'red';
+    tddCycle.current_test = tddCycle.all_tests[tddCycle.test_index].code;
+    tddCycle.current_test_name = tddCycle.all_tests[tddCycle.test_index].name;
+    tddCycle.all_tests[tddCycle.test_index].status = 'red';
+
+    await pool.query(
+      `UPDATE coding_sessions SET 
+       status = $1, 
+       tdd_cycle = $2::jsonb
+       WHERE id = $3`,
+      ['tdd_red', JSON.stringify(tddCycle), sessionId]
+    );
+
+    console.log(`[TDD] Advanced to test ${tddCycle.test_index + 1}/${tddCycle.total_tests}: ${tddCycle.current_test_name}`);
+
+    // Start RED phase for next test
+    await this.executeTestRED(sessionId, tddCycle);
+  }
+
+  /**
+   * Build RED Phase prompt: Execute test and verify it FAILS
+   */
+  private async buildREDPhasePrompt(projectId: string, story: any, tddCycle: TDDCycle): Promise<string> {
+    const lines: string[] = [];
+    const project = await this.projectRepo.findById(projectId);
+    
+    lines.push(`# TDD RED PHASE: Verify Test Fails\n\n`);
+    lines.push(`## Current Test (${tddCycle.test_index + 1}/${tddCycle.total_tests})\n\n`);
+    lines.push(`**Test Name:** ${tddCycle.current_test_name}\n\n`);
+    lines.push(`**Test Code:**\n`);
+    lines.push(`\`\`\`\n${tddCycle.current_test}\n\`\`\`\n\n`);
+    
+    lines.push(`## RED Phase Objective\n\n`);
+    lines.push(`**CRITICAL - RED Phase Requirements:**\n`);
+    lines.push(`1. Save the test code to the appropriate test file\n`);
+    lines.push(`2. Execute the test\n`);
+    lines.push(`3. **The test MUST FAIL** (this validates the test is working)\n`);
+    lines.push(`4. Verify the failure is because the feature is NOT implemented (not a syntax error)\n`);
+    lines.push(`5. Report the test failure with clear error message\n\n`);
+    
+    if (project?.tech_stack) {
+      lines.push(`## Tech Stack\n`);
+      lines.push(`**Stack:** ${project.tech_stack}\n`);
+      lines.push(`Use appropriate test runner for this stack.\n\n`);
+    }
+    
+    lines.push(`## Instructions\n\n`);
+    lines.push(`1. **Save Test:** Write the test code to the correct location in the project\n`);
+    lines.push(`2. **Run Test:** Execute the test using the project's test runner\n`);
+    lines.push(`3. **Verify Failure:** The test MUST fail. If it passes without implementation, the test is invalid.\n`);
+    lines.push(`4. **Report:** Provide:\n`);
+    lines.push(`   - Test file path\n`);
+    lines.push(`   - Test execution command\n`);
+    lines.push(`   - Test output showing FAILURE\n`);
+    lines.push(`   - Reason for failure (should be "feature not implemented")\n\n`);
+    
+    lines.push(`## Expected Output\n\n`);
+    lines.push(`\`\`\`json\n`);
+    lines.push(`{\n`);
+    lines.push(`  "phase": "red",\n`);
+    lines.push(`  "test_file": "path/to/test.spec.js",\n`);
+    lines.push(`  "test_failed": true,\n`);
+    lines.push(`  "failure_reason": "Function 'calculateTotal' is not defined",\n`);
+    lines.push(`  "test_output": "... test runner output ..."\n`);
+    lines.push(`}\n`);
+    lines.push(`\`\`\`\n\n`);
+    
+    lines.push(`**REMEMBER:** A failing test in RED phase is GOOD. It means the test is working correctly.\n`);
+    
+    return lines.join('');
+  }
+
+  /**
+   * Build GREEN Phase prompt: Implement MINIMAL code to pass test
+   */
+  private async buildGREENPhasePrompt(projectId: string, story: any, tddCycle: TDDCycle): Promise<string> {
+    const lines: string[] = [];
+    const project = await this.projectRepo.findById(projectId);
+    const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
+    
+    lines.push(promptBundle);
+    lines.push(`\n---\n\n`);
+    
+    lines.push(`# TDD GREEN PHASE: Make Test Pass\n\n`);
+    lines.push(`## Current Test (${tddCycle.test_index + 1}/${tddCycle.total_tests})\n\n`);
+    lines.push(`**Test Name:** ${tddCycle.current_test_name}\n`);
+    lines.push(`**Attempt:** ${tddCycle.all_tests[tddCycle.test_index].attempts}\n\n`);
+    
+    lines.push(`**Failing Test:**\n`);
+    lines.push(`\`\`\`\n${tddCycle.current_test}\n\`\`\`\n\n`);
+    
+    lines.push(`## GREEN Phase Objective\n\n`);
+    lines.push(`**CRITICAL - GREEN Phase Requirements:**\n`);
+    lines.push(`1. Write the MINIMUM code needed to make THIS test pass\n`);
+    lines.push(`2. Do NOT implement features for other tests yet\n`);
+    lines.push(`3. Focus ONLY on making this specific test GREEN\n`);
+    lines.push(`4. Keep the implementation simple and direct\n`);
+    lines.push(`5. Execute the test to verify it passes\n\n`);
+    
+    if (project?.tech_stack) {
+      lines.push(`## Tech Stack Constraint\n`);
+      lines.push(`**Stack:** ${project.tech_stack}\n`);
+      lines.push(`Use ONLY technologies from this stack.\n\n`);
+    }
+    
+    lines.push(`## Implementation Strategy\n\n`);
+    lines.push(`1. **Minimal Implementation:** Write the simplest code that passes the test\n`);
+    lines.push(`2. **No Over-Engineering:** Don't add features not required by this test\n`);
+    lines.push(`3. **Hardcode if Needed:** It's OK to hardcode initially if it makes the test pass\n`);
+    lines.push(`4. **Test First:** Make the test pass FIRST, optimize LATER (in REFACTOR phase)\n\n`);
+    
+    lines.push(`## Previous Tests Status\n\n`);
+    const passedTests = tddCycle.all_tests.slice(0, tddCycle.test_index).filter(t => t.status === 'refactored' || t.status === 'green');
+    if (passedTests.length > 0) {
+      lines.push(`**Tests Already Passing (${passedTests.length}):**\n`);
+      passedTests.forEach((t, i) => {
+        lines.push(`${i + 1}. ✅ ${t.name}\n`);
+      });
+      lines.push(`\n**IMPORTANT:** Your implementation must NOT break these existing tests.\n\n`);
+    }
+    
+    lines.push(`## Instructions\n\n`);
+    lines.push(`1. **Analyze Test:** Understand what the test expects\n`);
+    lines.push(`2. **Write Code:** Implement MINIMAL code to satisfy the test\n`);
+    lines.push(`3. **Execute Test:** Run the test to verify it passes\n`);
+    lines.push(`4. **Verify All Tests:** Run ALL previous tests to ensure nothing broke\n`);
+    lines.push(`5. **Report Success:** Confirm the test is now GREEN\n\n`);
+    
+    lines.push(`## Expected Output\n\n`);
+    lines.push(`\`\`\`json\n`);
+    lines.push(`{\n`);
+    lines.push(`  "phase": "green",\n`);
+    lines.push(`  "files_created": ["path/to/implementation.js"],\n`);
+    lines.push(`  "test_passed": true,\n`);
+    lines.push(`  "all_tests_passed": true,\n`);
+    lines.push(`  "test_output": "... test runner output showing PASS ..."\n`);
+    lines.push(`}\n`);
+    lines.push(`\`\`\`\n\n`);
+    
+    lines.push(`**REMEMBER:** Keep it simple. You can refactor in the next phase.\n`);
+    
+    return lines.join('');
+  }
+
+  /**
+   * Build REFACTOR Phase prompt: Improve code while keeping tests passing
+   */
+  private async buildREFACTORPhasePrompt(projectId: string, story: any, tddCycle: TDDCycle): Promise<string> {
+    const lines: string[] = [];
+    const project = await this.projectRepo.findById(projectId);
+    const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
+    
+    lines.push(promptBundle);
+    lines.push(`\n---\n\n`);
+    
+    lines.push(`# TDD REFACTOR PHASE: Improve Code Quality\n\n`);
+    lines.push(`## Context\n\n`);
+    lines.push(`**Tests Completed:** ${tddCycle.test_index + 1}/${tddCycle.total_tests}\n`);
+    lines.push(`**Refactor Count:** ${tddCycle.refactor_count}\n\n`);
+    
+    lines.push(`## REFACTOR Phase Objective\n\n`);
+    lines.push(`**CRITICAL - REFACTOR Phase Requirements:**\n`);
+    lines.push(`1. Improve code quality without changing behavior\n`);
+    lines.push(`2. ALL tests MUST continue to pass\n`);
+    lines.push(`3. Apply clean code principles\n`);
+    lines.push(`4. Remove duplication\n`);
+    lines.push(`5. Improve names, structure, and readability\n\n`);
+    
+    if (project?.tech_stack) {
+      lines.push(`## Tech Stack\n`);
+      lines.push(`**Stack:** ${project.tech_stack}\n\n`);
+    }
+    
+    lines.push(`## Refactoring Checklist\n\n`);
+    lines.push(`Analyze the current code for these improvements:\n\n`);
+    lines.push(`### Code Smells to Fix:\n`);
+    lines.push(`- [ ] **Duplicated Code:** Extract to reusable functions\n`);
+    lines.push(`- [ ] **Long Functions:** Break into smaller functions (< 20 lines)\n`);
+    lines.push(`- [ ] **Magic Numbers:** Replace with named constants\n`);
+    lines.push(`- [ ] **Poor Names:** Improve variable/function names for clarity\n`);
+    lines.push(`- [ ] **Deep Nesting:** Flatten conditionals, use early returns\n`);
+    lines.push(`- [ ] **Comments Explaining Code:** Refactor to self-documenting code\n`);
+    lines.push(`- [ ] **Large Classes/Modules:** Split responsibilities (Single Responsibility Principle)\n\n`);
+    
+    lines.push(`### Design Improvements:\n`);
+    lines.push(`- [ ] **Dependency Injection:** Inject dependencies instead of hardcoding\n`);
+    lines.push(`- [ ] **Error Handling:** Add proper error handling if missing\n`);
+    lines.push(`- [ ] **Type Safety:** Add types/interfaces if using TypeScript\n`);
+    lines.push(`- [ ] **Immutability:** Prefer immutable data structures\n`);
+    lines.push(`- [ ] **Pure Functions:** Minimize side effects\n\n`);
+    
+    lines.push(`## Refactoring Strategy\n\n`);
+    lines.push(`1. **Small Steps:** Make one improvement at a time\n`);
+    lines.push(`2. **Run Tests:** After EACH change, run ALL tests\n`);
+    lines.push(`3. **Revert if Broken:** If any test fails, revert the change\n`);
+    lines.push(`4. **Document:** Explain what you refactored and why\n\n`);
+    
+    lines.push(`## Tests That Must Pass\n\n`);
+    const completedTests = tddCycle.all_tests.slice(0, tddCycle.test_index + 1);
+    lines.push(`**All ${completedTests.length} tests must remain GREEN:**\n`);
+    completedTests.forEach((t, i) => {
+      lines.push(`${i + 1}. ✅ ${t.name}\n`);
+    });
+    lines.push(`\n`);
+    
+    lines.push(`## Instructions\n\n`);
+    lines.push(`1. **Analyze:** Review current implementation for code smells\n`);
+    lines.push(`2. **Plan:** Identify specific refactorings to apply\n`);
+    lines.push(`3. **Refactor:** Apply improvements one at a time\n`);
+    lines.push(`4. **Test:** Run ALL tests after each refactoring\n`);
+    lines.push(`5. **Verify:** Ensure all ${completedTests.length} tests still pass\n`);
+    lines.push(`6. **Document:** List refactorings applied\n\n`);
+    
+    lines.push(`## Expected Output\n\n`);
+    lines.push(`\`\`\`json\n`);
+    lines.push(`{\n`);
+    lines.push(`  "phase": "refactor",\n`);
+    lines.push(`  "refactorings_applied": [\n`);
+    lines.push(`    "Extracted duplicate validation logic to validateInput() function",\n`);
+    lines.push(`    "Renamed 'x' to 'totalAmount' for clarity",\n`);
+    lines.push(`    "Flattened nested if statements using early returns"\n`);
+    lines.push(`  ],\n`);
+    lines.push(`  "files_modified": ["path/to/implementation.js"],\n`);
+    lines.push(`  "all_tests_passed": true,\n`);
+    lines.push(`  "test_output": "... all tests GREEN ..."\n`);
+    lines.push(`}\n`);
+    lines.push(`\`\`\`\n\n`);
+    
+    lines.push(`**REMEMBER:** Refactor means improving WITHOUT changing behavior. All tests must remain GREEN.\n`);
+    
+    return lines.join('');
   }
 }

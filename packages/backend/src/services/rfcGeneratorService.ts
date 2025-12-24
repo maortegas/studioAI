@@ -126,6 +126,22 @@ export class RFCGeneratorService {
       lines.push('');
     });
 
+    // Add Product Features section before User Stories
+    if (prd.features && prd.features.length > 0) {
+      lines.push('---');
+      lines.push('');
+      lines.push('## Product Features');
+      lines.push('');
+      prd.features.forEach((feature: any, index: number) => {
+        lines.push(`### Feature ${index + 1}: ${feature.title}`);
+        if (feature.id) {
+          lines.push(`**ID:** ${feature.id}`);
+        }
+        lines.push(`${feature.description}`);
+        lines.push('');
+      });
+    }
+
     lines.push('---');
     lines.push('');
     lines.push('## User Stories');
@@ -151,54 +167,102 @@ export class RFCGeneratorService {
       lines.push('');
     });
 
+    // Add Tech Stack Constraints section if project.tech_stack exists
+    if (project?.tech_stack) {
+      lines.push('---');
+      lines.push('');
+      lines.push('## Constraints');
+      lines.push('');
+      lines.push('**MANDATORY TECHNOLOGY STACK:**');
+      lines.push(project.tech_stack);
+      lines.push('');
+      lines.push('**CRITICAL REQUIREMENT:** You MUST strictly adhere to the technology stack defined above. All architectural decisions, technology recommendations, and implementation details MUST be compatible with and use ONLY the technologies specified in this stack. Do NOT suggest or recommend technologies that are not part of this defined stack.');
+      lines.push('');
+    }
+
     lines.push('---');
     lines.push('');
     lines.push('## Instructions');
     lines.push('');
-    lines.push('Generate a comprehensive RFC (Request for Comments) / Technical Design Document that defines the system architecture, API contracts, and database schema for the project described above.');
+    lines.push('Generate a comprehensive, professional RFC (Request for Comments) / Technical Design Document that defines the system architecture, API contracts, and database schema for the project described above.');
+    lines.push('');
+    lines.push('The RFC must follow a professional structure and include thorough analysis, justification, and risk assessment for all architectural decisions.');
     lines.push('');
     lines.push('### Required Sections');
     lines.push('');
-    lines.push('1. **Overview**: High-level summary of the system');
-    lines.push('2. **Architecture Decision**: Choose between:');
-    lines.push('   - Monorepo (recommended for this project)');
-    lines.push('   - Polyrepo');
-    lines.push('   - Microservices');
-    lines.push('   - Monolithic');
-    lines.push('   - Serverless');
-    lines.push('   Explain the reasoning based on project requirements.');
+    lines.push('1. **Overview**: High-level summary of the system, its purpose, and key objectives');
     lines.push('');
-    lines.push('3. **System Architecture**:');
+    lines.push('2. **Architecture Decision**:');
+    lines.push('   - Analyze and discuss the following architecture patterns:');
+    lines.push('     - Monorepo');
+    lines.push('     - Polyrepo');
+    lines.push('     - Microservices');
+    lines.push('     - Monolithic');
+    lines.push('     - Serverless');
+    lines.push('   - **You must evaluate each option** based on the PRD requirements, project features, user stories, and constraints.');
+    lines.push('   - **Justify your selection** with specific reasoning tied to the project requirements.');
+    lines.push('   - **Do NOT default to any specific pattern** (e.g., "Monorepo is recommended"). Instead, analyze which pattern best fits THIS specific project based on the PRD.');
+    lines.push('');
+    lines.push('3. **Alternatives Considered**:');
+    lines.push('   - List all architecture patterns, technologies, and design approaches that were evaluated but rejected.');
+    lines.push('   - For each rejected alternative, explain:');
+    lines.push('     - Why it was considered');
+    lines.push('     - Why it was ultimately rejected');
+    lines.push('     - What trade-offs were made');
+    lines.push('   - This section demonstrates thorough analysis and helps stakeholders understand the decision-making process.');
+    lines.push('');
+    lines.push('4. **System Architecture**:');
     lines.push('   - Overall system design');
-    lines.push('   - Component breakdown');
-    lines.push('   - Technology stack recommendations');
+    lines.push('   - Component breakdown with clear responsibilities');
+    lines.push('   - Technology stack (must align with defined constraints if provided)');
+    lines.push('   - Component interactions and dependencies');
     lines.push('   - If diagrams are requested, include Mermaid.js sequence diagrams');
     lines.push('');
-    lines.push('4. **API Design**:');
+    lines.push('5. **Risks & Mitigations**:');
+    lines.push('   - Identify technical risks associated with the proposed architecture');
+    lines.push('   - For each risk, provide:');
+    lines.push('     - Risk description and potential impact');
+    lines.push('     - Likelihood of occurrence');
+    lines.push('     - Mitigation strategies');
+    lines.push('     - Contingency plans if mitigation fails');
+    lines.push('   - Consider risks related to:');
+    lines.push('     - Scalability and performance');
+    lines.push('     - Technology choices and dependencies');
+    lines.push('     - Security vulnerabilities');
+    lines.push('     - Deployment and operations');
+    lines.push('     - Data consistency and integrity');
+    lines.push('     - Integration complexity');
+    lines.push('');
+    lines.push('6. **API Design**:');
     lines.push('   - RESTful endpoints or GraphQL schema');
     lines.push('   - Request/Response formats');
     lines.push('   - Authentication and authorization');
+    lines.push('   - API versioning strategy');
     lines.push('   - If API contracts are requested, provide OpenAPI/Swagger specification');
     lines.push('');
-    lines.push('5. **Database Schema**:');
+    lines.push('7. **Database Schema**:');
     lines.push('   - Entity Relationship Model');
     lines.push('   - Table definitions with fields and types');
     lines.push('   - Relationships and constraints');
+    lines.push('   - Indexing strategy');
     lines.push('   - If database schema is requested, provide SQL DDL or NoSQL schema definitions');
     lines.push('');
-    lines.push('6. **Data Flow**:');
+    lines.push('8. **Data Flow**:');
     lines.push('   - How data flows through the system');
     lines.push('   - Key data transformations');
+    lines.push('   - Data persistence and retrieval patterns');
     lines.push('');
-    lines.push('7. **Security Considerations**:');
+    lines.push('9. **Security Considerations**:');
     lines.push('   - Authentication strategy');
     lines.push('   - Authorization model');
-    lines.push('   - Data protection');
+    lines.push('   - Data protection and encryption');
+    lines.push('   - Security best practices');
     lines.push('');
-    lines.push('8. **Deployment Architecture**:');
+    lines.push('10. **Deployment Architecture**:');
     lines.push('   - Infrastructure requirements');
     lines.push('   - Deployment strategy');
     lines.push('   - Scalability considerations');
+    lines.push('   - Monitoring and observability');
     lines.push('');
 
     if (options?.include_diagrams) {

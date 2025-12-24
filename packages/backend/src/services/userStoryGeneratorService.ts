@@ -1,7 +1,7 @@
 import { AIService } from './aiService';
 import { PRDService } from './prdService';
 import { TaskRepository } from '../repositories/taskRepository';
-import { PRDDocument, GenerateStoriesRequest, GenerateStoriesResponse, UserStory, AcceptanceCriterion } from '@devflow-studio/shared';
+import { PRDDocument, GenerateStoriesRequest, GenerateStoriesResponse, UserStory, AcceptanceCriterion, Feature } from '@devflow-studio/shared';
 import { createFile, ensureDirectory } from '../utils/fileSystem';
 import * as path from 'path';
 
@@ -96,102 +96,83 @@ export class UserStoryGeneratorService {
   private buildStoryGenerationPrompt(prd: PRDDocument, options?: GenerateStoriesRequest['options']): string {
     const lines: string[] = [];
 
-    lines.push('# Generate User Stories from PRD');
-    lines.push('');
-    lines.push('## PRD Vision');
-    lines.push(prd.vision);
-    lines.push('');
+    // --- 1. CONTEXTO Y VISION ---
+    lines.push(`# User Story Generation Task`);
+    lines.push(`## Role`);
+    lines.push(`You are an expert Product Owner and Business Analyst.`);
+    lines.push(``);
+    
+    lines.push(`## PRD Vision`);
+    lines.push(prd.vision || 'No vision provided.');
+    lines.push(``);
 
-    lines.push('## User Personas');
-    prd.personas.forEach((persona, index) => {
-      lines.push(`### Persona ${index + 1}: ${persona.role}`);
-      if (persona.name) {
-        lines.push(`**Name**: ${persona.name}`);
-      }
-      lines.push('');
-      lines.push('**Needs:**');
-      persona.needs.forEach(need => {
-        lines.push(`- ${need}`);
+    // --- 2. PERSONAS (Mantenido igual) ---
+    lines.push(`## User Personas`);
+    if (prd.personas && prd.personas.length > 0) {
+      prd.personas.forEach((persona, index) => {
+        lines.push(`### Persona ${index + 1}: ${persona.role}`);
+        lines.push(`- **Needs:** ${persona.needs.join(', ')}`);
+        lines.push(`- **Goals:** ${persona.goals.join(', ')}`);
+        if (persona.pain_points?.length) {
+          lines.push(`- **Pain Points:** ${persona.pain_points.join(', ')}`);
+        }
+        lines.push(``);
       });
-      lines.push('');
-      lines.push('**Goals:**');
-      persona.goals.forEach(goal => {
-        lines.push(`- ${goal}`);
-      });
-      if (persona.pain_points && persona.pain_points.length > 0) {
-        lines.push('');
-        lines.push('**Pain Points:**');
-        persona.pain_points.forEach(pp => {
-          lines.push(`- ${pp}`);
-        });
-      }
-      lines.push('');
-    });
+    }
 
-    lines.push('---');
-    lines.push('');
-    lines.push('## Instructions');
-    lines.push('');
-    lines.push('Generate comprehensive user stories based on the PRD above. For each persona, create user stories that address their needs and goals.');
-    lines.push('');
-    lines.push('### Format Requirements');
-    lines.push('');
-    lines.push('Each user story MUST follow this format:');
-    lines.push('**"Yo como [usuario], quiero [acción], para [beneficio]"**');
-    lines.push('');
-    lines.push('### Acceptance Criteria Requirements');
-    lines.push('');
-    lines.push('Each user story MUST include both functional and technical acceptance criteria:');
-    lines.push('- **Functional AC**: Describe what the feature should do from a user perspective');
-    lines.push('- **Technical AC**: Describe technical requirements, constraints, or implementation details');
-    lines.push('');
-    lines.push('### Output Format');
-    lines.push('');
-    lines.push('Return a JSON array of user stories in the following format:');
-    lines.push('```json');
-    lines.push('[');
-    lines.push('  {');
-    lines.push('    "title": "Yo como [usuario], quiero [acción], para [beneficio]",');
-    lines.push('    "description": "Detailed description of the story",');
-    lines.push('    "user_role": "[extracted role]",');
-    lines.push('    "action": "[extracted action]",');
-    lines.push('    "benefit": "[extracted benefit]",');
-    lines.push('    "acceptance_criteria": [');
-    lines.push('      {');
-    lines.push('        "criterion": "Functional criterion description",');
-    lines.push('        "type": "functional",');
-    lines.push('        "priority": "high"');
-    lines.push('      },');
-    lines.push('      {');
-    lines.push('        "criterion": "Technical criterion description",');
-    lines.push('        "type": "technical",');
-    lines.push('        "priority": "medium"');
-    lines.push('      }');
-    lines.push('    ]');
-    lines.push('  }');
-    lines.push(']');
-    lines.push('```');
-    lines.push('');
-    lines.push('### Important Guidelines');
-    lines.push('');
-    lines.push('1. Generate stories for ALL personas and ALL their needs');
-    lines.push('2. Each story must be independent and testable');
-    lines.push('3. Acceptance criteria must be specific and measurable');
-    lines.push('4. Include both positive and negative test cases in AC when applicable');
-    lines.push('5. Technical AC should cover API contracts, data validation, error handling, etc.');
-    lines.push('6. Do NOT generate stories that exceed the scope defined in the PRD vision');
-    lines.push('');
-    lines.push('### CRITICAL: Output Format');
-    lines.push('');
-    lines.push('**YOU MUST RETURN ONLY THE JSON ARRAY. NO EXPLANATIONS, NO INTRODUCTORY TEXT, NO COMMENTS.**');
-    lines.push('');
-    lines.push('Your response must start with [ and end with ]. Do NOT include:');
-    lines.push('- Introductory sentences like "I\'ve generated..." or "Here are the stories..."');
-    lines.push('- Explanations before or after the JSON');
-    lines.push('- Markdown formatting around the JSON');
-    lines.push('- Any text whatsoever outside the JSON array');
-    lines.push('');
-    lines.push('**IMPORTANT: Return ONLY the raw JSON array, nothing else. The response should start with [ and end with ].**');
+    // --- 3. ALCANCE DEFINIDO (LA CLAVE ANTI-ALUCINACIÓN) ---
+    // Aquí restringimos el universo del LLM. Solo puede usar esto.
+    lines.push(`---`);
+    lines.push(`## DEFINED SCOPE (Source of Truth)`);
+    lines.push(`Below are the ONLY approved features and requirements for this project.`);
+    lines.push(`**STRICT RULE:** You must generate user stories EXCLUSIVELY based on the items listed below.`);
+    lines.push(`Do NOT invent new features, flows, or requirements that are not explicitly described here.`);
+    lines.push(``);
+    
+    if (prd.features && prd.features.length > 0) {
+      prd.features.forEach((feature: Feature, index: number) => {
+        lines.push(`### Feature ${index + 1}: ${feature.title}`);
+        if (feature.id) lines.push(`**ID:** ${feature.id}`);
+        lines.push(`${feature.description}`);
+        lines.push(``);
+      });
+    } else {
+      lines.push(`**WARNING:** No specific features were provided in the PRD. Rely strictly on the Vision and Personas, but keep stories high-level and conceptual.`);
+      lines.push(``);
+    }
+
+    // --- 4. INSTRUCCIONES ESTRICTAS ---
+    lines.push(`## Instructions`);
+    lines.push(`1. Map the User Personas' Needs to the Defined Scope features.`);
+    lines.push(`2. Create user stories ONLY if a Defined Feature supports a Persona's Need.`);
+    lines.push(`3. If a Persona has a Need that is NOT covered by the Defined Scope, DO NOT create a story for it. Do not try to "fill the gap" with hallucinated features.`);
+    lines.push(`4. Each story MUST reference the specific Feature ID (or Title) it implements.`);
+    lines.push(``);
+
+    // --- 5. FORMATO JSON CON TRAZABILIDAD ---
+    lines.push(`## Output Format`);
+    lines.push(`Return a RAW JSON array (no markdown).`);
+    lines.push(`Each object must strictly follow this schema:`);
+    lines.push(`\`\`\`json`);
+    lines.push(`[`);
+    lines.push(`  {`);
+    lines.push(`    "title": "Yo como [rol], quiero [acción], para [beneficio]",`);
+    lines.push(`    "user_role": "[rol]",`);
+    lines.push(`    "related_feature": "[Title or ID of the feature from Defined Scope]",`);
+    lines.push(`    "description": "[Explanation of how this story implements the specific feature]",`);
+    lines.push(`    "acceptance_criteria": [`);
+    lines.push(`      { "criterion": "...", "type": "functional" },`);
+    lines.push(`      { "criterion": "...", "type": "technical" }`);
+    lines.push(`    ]`);
+    lines.push(`  }`);
+    lines.push(`]`);
+    lines.push(`\`\`\``);
+    
+    // --- 6. BLOQUEO FINAL ---
+    lines.push(``);
+    lines.push(`## CRITICAL SAFETY CHECK`);
+    lines.push(`Before outputting, verify: Does every story correspond to a Feature listed in "DEFINED SCOPE"?`);
+    lines.push(`If yes, output JSON. If no, remove the hallucinated story.`);
 
     return lines.join('\n');
   }
@@ -243,6 +224,7 @@ export class UserStoryGeneratorService {
       user_role: data.user_role || this.extractRole(data.title),
       action: data.action || this.extractAction(data.title),
       benefit: data.benefit || this.extractBenefit(data.title),
+      related_feature: data.related_feature || undefined, // Feature ID or Title from PRD
       acceptance_criteria: (data.acceptance_criteria || []).map((ac: any) => ({
         criterion: ac.criterion || ac,
         type: ac.type === 'functional' || ac.type === 'technical' ? ac.type : 'functional',
