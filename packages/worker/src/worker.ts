@@ -322,7 +322,7 @@ async function processJob(jobId: string) {
     const phase = job.args.phase; // 'test_generation', 'test_generation_after', 'implementation', 'tdd_red', 'tdd_green', 'tdd_refactor', or 'story_generation'
     const isCodingSession = mode === 'agent' && codingSessionId;
     const isTestGeneration = isCodingSession && (phase === 'test_generation' || phase === 'test_generation_after');
-    const isImplementation = isCodingSession && phase === 'implementation';
+    const isImplementation = isCodingSession && (phase === 'implementation' || phase === 'tdd_all_at_once');
     const isTDDPhase = isCodingSession && (phase === 'tdd_green' || phase === 'tdd_refactor'); // RED phase removed
     
     // Check if this is a story generation job
@@ -379,11 +379,17 @@ async function processJob(jobId: string) {
       );
       console.log(`[Worker] Test generation started for coding session ${codingSessionId}`);
     } else if (isImplementation) {
+      // For tdd_all_at_once, keep status as tdd_implementing, otherwise set to running
+      const status = phase === 'tdd_all_at_once' ? 'tdd_implementing' : 'running';
       await pool.query(
-        'UPDATE coding_sessions SET status = $1 WHERE id = $2',
-        ['running', codingSessionId]
+        'UPDATE coding_sessions SET status = $1, started_at = COALESCE(started_at, $2) WHERE id = $3',
+        [status, new Date(), codingSessionId]
       );
-      console.log(`[Worker] Implementation started for coding session ${codingSessionId}`);
+      if (phase === 'tdd_all_at_once') {
+        console.log(`[Worker] TDD all-at-once implementation started for coding session ${codingSessionId}`);
+      } else {
+        console.log(`[Worker] Implementation started for coding session ${codingSessionId}`);
+      }
     }
 
     // Set up event handlers
@@ -696,6 +702,98 @@ async function processJob(jobId: string) {
         // Implementation completed
         try {
           const testStrategy = job.args?.test_strategy || 'tdd';
+          const isTDDAllAtOnce = phase === 'tdd_all_at_once';
+          
+          // For TDD all-at-once, handle completion differently
+          if (isTDDAllAtOnce) {
+            console.log(`[Worker] TDD all-at-once implementation completed for session ${codingSessionId}`);
+            
+            // Update session status to completed
+            // Note: implementation_progress has a CHECK constraint (likely <= 50)
+            // Using 50 to match other completion paths and avoid constraint violation
+            await pool.query(
+              'UPDATE coding_sessions SET status = $1, implementation_progress = $2, progress = $3, completed_at = $4 WHERE id = $5',
+              ['completed', 50, 100, new Date(), codingSessionId]
+            );
+            
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'completed', JSON.stringify({ 
+                message: 'TDD all-at-once implementation completed',
+                phase: 'tdd_all_at_once',
+                total_tests: job.args?.total_tests || 0
+              })]
+            );
+            
+            console.log(`[Worker] Coding session ${codingSessionId} completed (TDD all-at-once)`);
+            
+            // Update breakdown task status to 'done'
+            await updateBreakdownTaskStatus(codingSessionId);
+            
+            // Execute test suites to verify all tests pass
+            try {
+              await executeTestSuitesForSession(codingSessionId);
+            } catch (testError) {
+              console.error('[Worker] Error executing test suites after TDD all-at-once:', testError);
+              // Continue even if test execution fails
+            }
+            
+            // Automatically trigger QA session
+            try {
+              const codingSession = await pool.query(
+                'SELECT project_id FROM coding_sessions WHERE id = $1',
+                [codingSessionId]
+              );
+              
+              if (codingSession.rows.length > 0) {
+                const projectId = codingSession.rows[0].project_id;
+                
+                // Create QA session
+                const qaSession = await pool.query(
+                  'INSERT INTO qa_sessions (project_id, coding_session_id, status) VALUES ($1, $2, $3) RETURNING *',
+                  [projectId, codingSessionId, 'pending']
+                );
+                
+                const qaSessionId = qaSession.rows[0].id;
+                console.log(`[Worker] Created QA session ${qaSessionId} for coding session ${codingSessionId}`);
+                
+                // Create AI job for QA
+                const projectPathResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
+                const projectPath = projectPathResult.rows[0]?.base_path;
+                const qaPrompt = await buildQAPrompt(projectId, codingSessionId);
+                const qaJob = await pool.query(
+                  `INSERT INTO ai_jobs (project_id, provider, command, args, status)
+                   VALUES ($1, $2, $3, $4, $5)
+                   RETURNING *`,
+                  [
+                    projectId,
+                    'cursor',
+                    'cursor',
+                    JSON.stringify({
+                      mode: 'agent',
+                      prompt: qaPrompt,
+                      project_path: projectPath,
+                      qa_session_id: qaSessionId,
+                    }),
+                    'pending'
+                  ]
+                );
+                
+                // Update QA session to running
+                await pool.query(
+                  'UPDATE qa_sessions SET status = $1, started_at = $2 WHERE id = $3',
+                  ['running', new Date(), qaSessionId]
+                );
+                
+                console.log(`[Worker] QA job ${qaJob.rows[0].id} created for session ${qaSessionId}`);
+              }
+            } catch (qaError) {
+              console.error('[Worker] Error creating QA session:', qaError);
+              // Don't fail the coding session if QA creation fails
+            }
+            
+            return; // Exit early, don't process as regular implementation
+          }
           
           // Check if we need to generate tests after implementation
           if (testStrategy === 'after') {
@@ -1192,8 +1290,12 @@ async function processJob(jobId: string) {
           
           console.log(`[Worker] Detected project type: ${projectType.type}`);
           
-          // Execute build command if available
+          // Initialize results with defaults
+          let installResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
           let buildResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          let testResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
+          
+          // Execute build command if available
           if (projectType.buildCommand) {
             console.log(`[Worker] Executing build command: ${projectType.buildCommand.join(' ')}`);
             
@@ -1218,7 +1320,6 @@ async function processJob(jobId: string) {
           }
           
           // Execute test command if available
-          let testResult = { success: true, errors: [] as string[], output: '', exitCode: 0 };
           if (projectType.testCommand) {
             console.log(`[Worker] Executing test command: ${projectType.testCommand.join(' ')}`);
             
@@ -2117,14 +2218,85 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
             }
           }
           
-          // Parse JSON
+          // Parse JSON with better error handling
           let storiesData: any[];
           try {
-            storiesData = JSON.parse(jsonString);
+            // Try to fix common JSON issues before parsing
+            let cleanedJson = jsonString.trim();
+            
+            // If JSON doesn't start with [, try to find the array
+            if (!cleanedJson.startsWith('[')) {
+              const arrayStart = cleanedJson.indexOf('[');
+              if (arrayStart >= 0) {
+                cleanedJson = cleanedJson.substring(arrayStart);
+                console.log('[Worker] 🔧 Fixed JSON: removed text before array start');
+              }
+            }
+            
+            // If JSON doesn't end with ], try to close it
+            if (!cleanedJson.endsWith(']')) {
+              // Count brackets to see if we need to close
+              const openBrackets = (cleanedJson.match(/\[/g) || []).length;
+              const closeBrackets = (cleanedJson.match(/\]/g) || []).length;
+              
+              if (openBrackets > closeBrackets) {
+                // Try to find the last object and close it properly
+                const lastBrace = cleanedJson.lastIndexOf('}');
+                if (lastBrace >= 0) {
+                  // Check if we need to close the object and array
+                  const afterLastBrace = cleanedJson.substring(lastBrace + 1);
+                  if (!afterLastBrace.includes('}') && !afterLastBrace.includes(']')) {
+                    cleanedJson = cleanedJson.substring(0, lastBrace + 1) + ']';
+                    console.log('[Worker] 🔧 Fixed JSON: added missing closing brackets');
+                  }
+                } else {
+                  // No closing brace found, try to add it
+                  const lastComma = cleanedJson.lastIndexOf(',');
+                  if (lastComma >= 0) {
+                    cleanedJson = cleanedJson.substring(0, lastComma) + '}]';
+                    console.log('[Worker] 🔧 Fixed JSON: closed incomplete object and array');
+                  }
+                }
+              }
+            }
+            
+            storiesData = JSON.parse(cleanedJson);
+            console.log(`[Worker] ✅ Successfully parsed JSON (${cleanedJson.length} chars)`);
           } catch (parseError: any) {
-            console.error('[Worker] JSON parse error:', parseError.message);
-            console.error('[Worker] JSON string preview:', jsonString.substring(0, 500));
-            throw new Error(`Failed to parse JSON: ${parseError.message}`);
+            console.error('[Worker] ❌ JSON parse error:', parseError.message);
+            console.error('[Worker] JSON string length:', jsonString.length);
+            console.error('[Worker] JSON string start:', jsonString.substring(0, 200));
+            console.error('[Worker] JSON string end:', jsonString.substring(Math.max(0, jsonString.length - 200)));
+            
+            // Try to extract valid stories from partial JSON
+            console.log('[Worker] 🔧 Attempting to extract valid stories from partial JSON...');
+            try {
+              // Look for complete story objects
+              const storyMatches = jsonString.match(/\{[^{}]*"title"[^{}]*\}/g);
+              if (storyMatches && storyMatches.length > 0) {
+                const extractedStories: any[] = [];
+                for (const match of storyMatches) {
+                  try {
+                    const story = JSON.parse(match);
+                    if (story.title) {
+                      extractedStories.push(story);
+                    }
+                  } catch (e) {
+                    // Skip invalid matches
+                  }
+                }
+                if (extractedStories.length > 0) {
+                  console.log(`[Worker] ⚠️ Extracted ${extractedStories.length} valid stories from partial JSON`);
+                  storiesData = extractedStories;
+                } else {
+                  throw parseError;
+                }
+              } else {
+                throw parseError;
+              }
+            } catch (extractError) {
+              throw new Error(`Failed to parse JSON: ${parseError.message}. JSON preview: ${jsonString.substring(0, 500)}`);
+            }
           }
           
           if (!Array.isArray(storiesData)) {
@@ -2138,7 +2310,41 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
             throw new Error('Parsed array is empty - no stories generated');
           }
           
-          console.log(`[Worker] Parsed ${storiesData.length} stories from AI response`);
+          console.log(`[Worker] ✅ Parsed ${storiesData.length} stories from AI response`);
+          
+          // Log first story for debugging
+          if (storiesData.length > 0) {
+            console.log(`[Worker] 📝 First story preview:`, JSON.stringify(storiesData[0], null, 2).substring(0, 300));
+          }
+          
+          // Validate each story has required fields
+          const validStories: any[] = [];
+          for (let i = 0; i < storiesData.length; i++) {
+            const story = storiesData[i];
+            if (!story || typeof story !== 'object') {
+              console.warn(`[Worker] ⚠️ Skipping invalid story at index ${i}: not an object`);
+              continue;
+            }
+            if (!story.title || typeof story.title !== 'string' || story.title.trim() === '') {
+              console.warn(`[Worker] ⚠️ Skipping story at index ${i}: missing or invalid title`);
+              console.warn(`[Worker] Story data:`, JSON.stringify(story, null, 2).substring(0, 200));
+              continue;
+            }
+            validStories.push(story);
+          }
+          
+          if (validStories.length === 0) {
+            console.error(`[Worker] ❌ No valid stories after validation. Original count: ${storiesData.length}`);
+            console.error(`[Worker] Sample invalid story:`, JSON.stringify(storiesData[0] || {}, null, 2));
+            throw new Error('No valid stories found after validation. All stories are missing required fields.');
+          }
+          
+          if (validStories.length < storiesData.length) {
+            console.warn(`[Worker] ⚠️ Filtered ${storiesData.length - validStories.length} invalid stories. ${validStories.length} valid stories remain.`);
+          }
+          
+          storiesData = validStories;
+          console.log(`[Worker] ✅ ${storiesData.length} valid stories ready to save`);
           
           // Get project_id from PRD and validate PRD exists
           const prdResult = await pool.query(
@@ -2153,9 +2359,16 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
           const projectId = prdResult.rows[0].project_id;
           const prdStatus = prdResult.rows[0].status;
           
+          // Validate project_id is not null
+          if (!projectId) {
+            throw new Error(`PRD ${prdId} has no project_id associated`);
+          }
+          
+          console.log(`[Worker] 📋 PRD ${prdId} is linked to project ${projectId}`);
+          
           // Validate project exists
           const projectCheck = await pool.query(
-            'SELECT id FROM projects WHERE id = $1',
+            'SELECT id, name FROM projects WHERE id = $1',
             [projectId]
           );
           
@@ -2163,6 +2376,8 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
             throw new Error(`Project ${projectId} not found for PRD ${prdId}`);
           }
           
+          const projectName = projectCheck.rows[0].name;
+          console.log(`[Worker] ✅ Project validated: ${projectId} (${projectName})`);
           console.log(`[Worker] Creating user stories for project ${projectId} from PRD ${prdId} (status: ${prdStatus})`);
           
           // Save each story to database with validation
@@ -2202,33 +2417,155 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
                 continue;
               }
               
-              // Validate title is not too long (database constraint)
-              if (title.length > 1000) {
-                console.warn(`[Worker] ⚠️ Skipping story with title too long (${title.length} chars): "${title.substring(0, 50)}..."`);
+              // Validate title is not too long (database constraint - typically 255 or 1000 chars)
+              const maxTitleLength = 1000;
+              if (title.length > maxTitleLength) {
+                console.warn(`[Worker] ⚠️ Skipping story with title too long (${title.length} chars, max: ${maxTitleLength}): "${title.substring(0, 50)}..."`);
+                skippedStories.push(title.substring(0, 50));
+                continue;
+              }
+              
+              // Validate projectId is a valid UUID
+              if (!projectId || typeof projectId !== 'string' || !projectId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+                console.error(`[Worker] ❌ Invalid project_id format: ${projectId}`);
+                storiesWithErrors++;
+                skippedStories.push(title.substring(0, 50));
+                continue;
+              }
+              
+              // Validate prdId is a valid UUID
+              if (!prdId || typeof prdId !== 'string' || !prdId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+                console.error(`[Worker] ❌ Invalid prd_id format: ${prdId}`);
+                storiesWithErrors++;
                 skippedStories.push(title.substring(0, 50));
                 continue;
               }
               
               // Save story as task (type='story', no epic_id - stories are independent)
-              const storyResult = await pool.query(
-                `INSERT INTO tasks (project_id, title, description, type, status, acceptance_criteria, generated_from_prd, priority, epic_id)
-                 VALUES ($1, $2, $3, 'story', 'todo', $4, true, $5, NULL)
-                 RETURNING id`,
-                [
+              // Check if prd_id column exists before including it in INSERT
+              let insertQuery: string;
+              let insertParams: any[];
+              
+              try {
+                // Try to check if prd_id column exists
+                const columnCheck = await pool.query(`
+                  SELECT EXISTS (
+                    SELECT FROM information_schema.columns 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'tasks' 
+                    AND column_name = 'prd_id'
+                  )
+                `);
+                
+                const hasPrdIdColumn = columnCheck.rows[0].exists;
+                
+                if (hasPrdIdColumn) {
+                  // Include prd_id in INSERT
+                  insertQuery = `INSERT INTO tasks (project_id, title, description, type, status, acceptance_criteria, generated_from_prd, priority, epic_id, prd_id)
+                                 VALUES ($1, $2, $3, 'story', 'todo', $4, true, $5, NULL, $6)
+                                 RETURNING id`;
+                  insertParams = [
+                    projectId,
+                    title.trim(),
+                    description || null,
+                    JSON.stringify(acceptanceCriteria),
+                    storyData.priority || 0,
+                    prdId, // Link story to PRD for traceability
+                  ];
+                } else {
+                  // Fallback: INSERT without prd_id (migration 014 not applied)
+                  console.warn(`[Worker] ⚠️ prd_id column not found. Migration 014 may not be applied. Saving story without PRD link.`);
+                  insertQuery = `INSERT INTO tasks (project_id, title, description, type, status, acceptance_criteria, generated_from_prd, priority, epic_id)
+                                 VALUES ($1, $2, $3, 'story', 'todo', $4, true, $5, NULL)
+                                 RETURNING id`;
+                  insertParams = [
+                    projectId,
+                    title.trim(),
+                    description || null,
+                    JSON.stringify(acceptanceCriteria),
+                    storyData.priority || 0,
+                  ];
+                }
+              } catch (checkError: any) {
+                // If check fails, use fallback without prd_id
+                console.warn(`[Worker] ⚠️ Could not verify prd_id column. Using fallback INSERT. Error: ${checkError.message}`);
+                insertQuery = `INSERT INTO tasks (project_id, title, description, type, status, acceptance_criteria, generated_from_prd, priority, epic_id)
+                               VALUES ($1, $2, $3, 'story', 'todo', $4, true, $5, NULL)
+                               RETURNING id`;
+                insertParams = [
                   projectId,
                   title.trim(),
                   description || null,
                   JSON.stringify(acceptanceCriteria),
                   storyData.priority || 0,
-                ]
-              );
+                ];
+              }
+              
+              // Log the parameters being used for debugging
+              console.log(`[Worker] 🔍 Inserting story:`);
+              console.log(`  - project_id: ${projectId}`);
+              console.log(`  - title: "${title.substring(0, 50)}"`);
+              console.log(`  - description length: ${description?.length || 0}`);
+              console.log(`  - acceptance_criteria count: ${acceptanceCriteria.length}`);
+              console.log(`  - priority: ${storyData.priority || 0}`);
+              console.log(`  - prd_id: ${prdId || 'N/A'}`);
+              console.log(`  - SQL: ${insertQuery.substring(0, 100)}...`);
+              
+              const storyResult = await pool.query(insertQuery, insertParams);
+              
+              if (!storyResult || !storyResult.rows || storyResult.rows.length === 0) {
+                throw new Error('INSERT query returned no rows. Story was not saved.');
+              }
               
               const storyId = storyResult.rows[0].id;
+              
+              // Verify the story was saved with correct project_id
+              const verifyResult = await pool.query(
+                'SELECT id, project_id, title, type FROM tasks WHERE id = $1',
+                [storyId]
+              );
+              
+              if (verifyResult.rows.length === 0) {
+                throw new Error(`Story ${storyId} was not found after INSERT`);
+              }
+              
+              const savedStory = verifyResult.rows[0];
+              if (savedStory.project_id !== projectId) {
+                console.error(`[Worker] ❌ MISMATCH: Story ${storyId} was saved with project_id ${savedStory.project_id}, expected ${projectId}`);
+                throw new Error(`Project ID mismatch: saved ${savedStory.project_id}, expected ${projectId}`);
+              }
+              
+              if (savedStory.type !== 'story') {
+                console.error(`[Worker] ❌ MISMATCH: Story ${storyId} was saved with type ${savedStory.type}, expected 'story'`);
+              }
+              
               savedStories.push(storyId);
-              console.log(`[Worker] ✅ Saved story: "${title.substring(0, 50)}..." (${storyId}) - project: ${projectId}, PRD: ${prdId}`);
+              console.log(`[Worker] ✅ Saved story: "${title.substring(0, 50)}..." (${storyId}) - project: ${projectId} ✅, PRD: ${prdId || 'N/A'}`);
             } catch (storyError: any) {
+              const errorInfo = {
+                message: storyError.message,
+                code: storyError.code,
+                detail: storyError.detail,
+                constraint: storyError.constraint,
+                table: storyError.table,
+                column: storyError.column
+              };
+              
               console.error(`[Worker] ❌ Error saving story "${storyData.title?.substring(0, 50) || '(no title)'}":`, storyError.message);
+              console.error(`[Worker] Error details:`, JSON.stringify(errorInfo, null, 2));
               console.error(`[Worker] Story data:`, JSON.stringify(storyData, null, 2).substring(0, 500));
+              
+              // Log specific database constraint errors
+              if (storyError.code === '23505') {
+                console.error(`[Worker] ⚠️ Duplicate key violation - story may already exist`);
+              } else if (storyError.code === '23503') {
+                console.error(`[Worker] ⚠️ Foreign key violation - referenced record may not exist`);
+              } else if (storyError.code === '23502') {
+                console.error(`[Worker] ⚠️ Not null violation - required field is missing`);
+              } else if (storyError.code === '22001') {
+                console.error(`[Worker] ⚠️ String data too long - field exceeds maximum length`);
+              }
+              
               storiesWithErrors++;
               skippedStories.push(storyData.title || '(error)');
             }
@@ -2256,7 +2593,23 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
           console.log(`[Worker] Story generation summary: ${savedStories.length} stories saved, ${skippedStories.length} skipped, ${storiesWithErrors} errors`);
           
           if (savedStories.length === 0) {
-            throw new Error('No stories were successfully saved to the database');
+            // Provide detailed error information
+            const errorDetails = [];
+            if (storiesData.length === 0) {
+              errorDetails.push('No stories were generated from AI');
+            } else {
+              errorDetails.push(`${storiesData.length} stories were generated but none were saved`);
+            }
+            if (skippedStories.length > 0) {
+              errorDetails.push(`${skippedStories.length} stories were skipped: ${skippedStories.slice(0, 5).join(', ')}${skippedStories.length > 5 ? '...' : ''}`);
+            }
+            if (storiesWithErrors > 0) {
+              errorDetails.push(`${storiesWithErrors} stories had errors during save`);
+            }
+            
+            const errorMessage = `No stories were successfully saved to the database. ${errorDetails.join('. ')}`;
+            console.error(`[Worker] ${errorMessage}`);
+            throw new Error(errorMessage);
           }
           
           // Save stories to filesystem
@@ -2517,8 +2870,20 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
               continue;
             }
             
-            // Ensure estimated_days doesn't exceed max
-            const estimatedDays = Math.min(taskData.estimated_days || 3, maxDaysPerTask);
+            // Ensure estimated_days doesn't exceed max and convert to integer
+            // Convert decimal values (e.g., 0.5, 1.5) to integers by rounding up
+            let estimatedDays: number | null = null;
+            if (taskData.estimated_days != null && !isNaN(taskData.estimated_days)) {
+              const rawDays = parseFloat(taskData.estimated_days);
+              if (!isNaN(rawDays) && rawDays > 0) {
+                // Round up to nearest integer (0.5 -> 1, 1.5 -> 2, etc.)
+                estimatedDays = Math.min(Math.ceil(rawDays), maxDaysPerTask);
+              }
+            }
+            // Default to 3 if not provided or invalid
+            if (estimatedDays === null || estimatedDays <= 0) {
+              estimatedDays = 3;
+            }
             
             const acceptanceCriteria = taskData.acceptance_criteria || [];
             

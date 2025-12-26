@@ -18,14 +18,53 @@ export class RFCRepository {
     return result.rows[0] ? this.mapRowToRFC(result.rows[0]) : null;
   }
 
-  async create(data: CreateRFCRequest): Promise<RFCDocument> {
-    const result = await pool.query(
-      `INSERT INTO rfc_documents (project_id, title, content, architecture_type, status)
-       VALUES ($1, $2, $3, $4, 'draft')
-       RETURNING *`,
-      [data.project_id, data.title, data.content, data.architecture_type || null]
-    );
-    return this.mapRowToRFC(result.rows[0]);
+  async create(data: CreateRFCRequest & { user_flow_id?: string }): Promise<RFCDocument> {
+    try {
+      // Check if user_flow_id column exists
+      const columnCheck = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_schema = 'public' 
+          AND table_name = 'rfc_documents' 
+          AND column_name = 'user_flow_id'
+        )
+      `);
+      
+      const hasUserFlowIdColumn = columnCheck.rows[0].exists;
+      
+      let result;
+      if (hasUserFlowIdColumn && data.user_flow_id) {
+        // Include user_flow_id in INSERT
+        result = await pool.query(
+          `INSERT INTO rfc_documents (project_id, title, content, architecture_type, status, user_flow_id)
+           VALUES ($1, $2, $3, $4, 'draft', $5)
+           RETURNING *`,
+          [data.project_id, data.title, data.content, data.architecture_type || null, data.user_flow_id]
+        );
+      } else {
+        // Fallback: INSERT without user_flow_id (migration 014 not applied)
+        if (data.user_flow_id && !hasUserFlowIdColumn) {
+          console.warn(`[RFCRepository] ⚠️ user_flow_id column not found. Migration 014 may not be applied. Creating RFC without user flow link.`);
+        }
+        result = await pool.query(
+          `INSERT INTO rfc_documents (project_id, title, content, architecture_type, status)
+           VALUES ($1, $2, $3, $4, 'draft')
+           RETURNING *`,
+          [data.project_id, data.title, data.content, data.architecture_type || null]
+        );
+      }
+      
+      return this.mapRowToRFC(result.rows[0]);
+    } catch (error: any) {
+      console.error('[RFCRepository] Error creating RFC:', error);
+      console.error('[RFCRepository] Error details:', {
+        message: error.message,
+        code: error.code,
+        detail: error.detail,
+        constraint: error.constraint
+      });
+      throw error;
+    }
   }
 
   async update(id: string, data: UpdateRFCRequest): Promise<RFCDocument | null> {
@@ -66,7 +105,7 @@ export class RFCRepository {
 
   async delete(id: string): Promise<boolean> {
     const result = await pool.query('DELETE FROM rfc_documents WHERE id = $1', [id]);
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   private mapRowToRFC(row: any): RFCDocument {

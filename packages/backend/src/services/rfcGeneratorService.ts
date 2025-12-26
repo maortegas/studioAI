@@ -32,72 +32,128 @@ export class RFCGeneratorService {
    * Generate RFC document from PRD and User Stories
    */
   async generateRFC(request: GenerateRFCRequest): Promise<{ rfc_id: string; job_id: string }> {
-    // Get PRD
-    const prd = await this.prdService.getPRDById(request.prd_id);
-    if (!prd) {
-      throw new Error('PRD not found');
+    try {
+      console.log(`[RFCGeneratorService] Starting RFC generation for project ${request.project_id}, PRD ${request.prd_id}`);
+      
+      // Get PRD
+      const prd = await this.prdService.getPRDById(request.prd_id);
+      if (!prd) {
+        throw new Error(`PRD ${request.prd_id} not found`);
+      }
+      console.log(`[RFCGeneratorService] ✅ PRD found: ${prd.title || prd.id}`);
+
+      // Get User Stories
+      const allStories = await this.taskRepo.findByProjectIdAndType(request.project_id, 'story');
+      console.log(`[RFCGeneratorService] Found ${allStories.length} total stories for project`);
+      
+      let stories = allStories;
+      
+      // Filter by story_ids if provided
+      if (request.story_ids && request.story_ids.length > 0) {
+        stories = allStories.filter(story => request.story_ids!.includes(story.id));
+        console.log(`[RFCGeneratorService] Filtered to ${stories.length} stories from ${request.story_ids.length} requested`);
+      }
+
+      if (stories.length === 0) {
+        throw new Error('No user stories found. Generate stories from PRD first.');
+      }
+
+    // Find user_flow_id from linked stories (if any story has a linked user flow)
+    let userFlowId: string | undefined = undefined;
+    if (stories.length > 0) {
+      try {
+        const { StoryUserFlowRepository } = await import('../repositories/storyUserFlowRepository');
+        const storyUserFlowRepo = new StoryUserFlowRepository();
+        
+        // Get user flows linked to any of the stories
+        const userFlowsForStories = await Promise.all(
+          stories.map(story => storyUserFlowRepo.findByStoryId(story.id))
+        );
+        
+        // Use the first user flow found (if multiple, prefer the first one)
+        const allLinkedFlows = userFlowsForStories.flat();
+        if (allLinkedFlows.length > 0) {
+          userFlowId = allLinkedFlows[0].user_flow_id;
+          console.log(`[RFCGeneratorService] Linking RFC to user flow ${userFlowId} from stories`);
+        }
+      } catch (error: any) {
+        // If story_user_flows table doesn't exist (migration 014 not applied), continue without linking
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          console.warn(`[RFCGeneratorService] ⚠️ story_user_flows table not found. Migration 014 may not be applied. Continuing without user flow link.`);
+        } else {
+          console.error(`[RFCGeneratorService] Error finding user flows for stories:`, error.message);
+          // Continue without user flow link rather than failing
+        }
+      }
     }
 
-    // Get User Stories
-    const allStories = await this.taskRepo.findByProjectIdAndType(request.project_id, 'story');
-    let stories = allStories;
-    
-    // Filter by story_ids if provided
-    if (request.story_ids && request.story_ids.length > 0) {
-      stories = allStories.filter(story => request.story_ids!.includes(story.id));
+      // Get project info
+      const project = await this.projectRepo.findById(request.project_id);
+      if (!project) {
+        throw new Error(`Project ${request.project_id} not found`);
+      }
+      console.log(`[RFCGeneratorService] ✅ Project found: ${project.name}`);
+
+      // Build prompt for RFC generation
+      console.log(`[RFCGeneratorService] Building RFC generation prompt...`);
+      const prompt = this.buildRFCGenerationPrompt(prd, stories, project, request.options);
+      console.log(`[RFCGeneratorService] Prompt built (${prompt.length} chars)`);
+
+      // Create AI job
+      console.log(`[RFCGeneratorService] Creating AI job...`);
+      const aiJob = await this.aiService.createAIJob({
+        project_id: request.project_id,
+        provider: 'cursor',
+        mode: 'agent',
+        prompt,
+      } as any, {
+        prd_id: request.prd_id,
+        phase: 'rfc_generation',
+        include_diagrams: request.options?.include_diagrams ?? true,
+        include_api_contracts: request.options?.include_api_contracts ?? true,
+        include_database_schema: request.options?.include_database_schema ?? true,
+        architecture_type: request.options?.architecture_type,
+        skipBundle: true,
+      });
+      console.log(`[RFCGeneratorService] ✅ AI job created: ${aiJob.id}`);
+
+      // Create RFC document placeholder (will be updated by worker)
+      const rfcTitle = `RFC: ${project.name} - Technical Design`;
+      console.log(`[RFCGeneratorService] Creating RFC document...`);
+      const rfc = await this.rfcRepo.create({
+        project_id: request.project_id,
+        title: rfcTitle,
+        content: '# RFC: Technical Design\n\n*Generating...*',
+        architecture_type: request.options?.architecture_type,
+        user_flow_id: userFlowId,
+      });
+      console.log(`[RFCGeneratorService] ✅ RFC document created: ${rfc.id}`);
+
+      // Update AI job args to include rfc_id
+      try {
+        const poolModule = await import('../config/database');
+        const pool = poolModule.default as any;
+        await pool.query(
+          `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+          [JSON.stringify({ rfc_id: rfc.id }), aiJob.id]
+        );
+        console.log(`[RFCGeneratorService] ✅ Updated AI job with RFC ID`);
+      } catch (updateError: any) {
+        console.error(`[RFCGeneratorService] ⚠️ Failed to update AI job args:`, updateError.message);
+        // Continue anyway - the job can still work without this
+      }
+
+      // Return RFC ID and job ID
+      console.log(`[RFCGeneratorService] ✅ RFC generation initiated successfully`);
+      return {
+        rfc_id: rfc.id,
+        job_id: aiJob.id,
+      };
+    } catch (error: any) {
+      console.error(`[RFCGeneratorService] ❌ Error generating RFC:`, error);
+      console.error(`[RFCGeneratorService] Error stack:`, error.stack);
+      throw error;
     }
-
-    if (stories.length === 0) {
-      throw new Error('No user stories found. Generate stories from PRD first.');
-    }
-
-    // Get project info
-    const project = await this.projectRepo.findById(request.project_id);
-    if (!project) {
-      throw new Error('Project not found');
-    }
-
-    // Build prompt for RFC generation
-    const prompt = this.buildRFCGenerationPrompt(prd, stories, project, request.options);
-
-    // Create AI job
-    const aiJob = await this.aiService.createAIJob({
-      project_id: request.project_id,
-      provider: 'cursor',
-      mode: 'agent',
-      prompt,
-    } as any, {
-      prd_id: request.prd_id,
-      phase: 'rfc_generation',
-      include_diagrams: request.options?.include_diagrams ?? true,
-      include_api_contracts: request.options?.include_api_contracts ?? true,
-      include_database_schema: request.options?.include_database_schema ?? true,
-      architecture_type: request.options?.architecture_type,
-      skipBundle: true,
-    });
-
-    // Create RFC document placeholder (will be updated by worker)
-    const rfcTitle = `RFC: ${project.name} - Technical Design`;
-    const rfc = await this.rfcRepo.create({
-      project_id: request.project_id,
-      title: rfcTitle,
-      content: '# RFC: Technical Design\n\n*Generating...*',
-      architecture_type: request.options?.architecture_type,
-    });
-
-    // Update AI job args to include rfc_id
-    const poolModule = await import('../config/database');
-    const pool = poolModule.default as any;
-    await pool.query(
-      `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
-      [JSON.stringify({ rfc_id: rfc.id }), aiJob.id]
-    );
-
-    // Return RFC ID and job ID
-    return {
-      rfc_id: rfc.id,
-      job_id: aiJob.id,
-    };
   }
 
   /**
@@ -331,6 +387,18 @@ export class RFCGeneratorService {
    */
   async getDatabaseSchemas(rfcId: string): Promise<DatabaseSchema[]> {
     return await this.dbSchemaRepo.findByRFCId(rfcId);
+  }
+
+  /**
+   * Update RFC status (draft, review, approved, rejected)
+   */
+  async updateRFCStatus(rfcId: string, status: 'draft' | 'review' | 'approved' | 'rejected'): Promise<RFCDocument> {
+    const rfc = await this.rfcRepo.update(rfcId, { status });
+    if (!rfc) {
+      throw new Error('RFC not found');
+    }
+    console.log(`[RFCGeneratorService] Updated RFC ${rfcId} status to ${status}`);
+    return rfc;
   }
 
   /**

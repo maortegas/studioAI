@@ -3,32 +3,21 @@ import { TaskRepository } from '../repositories/taskRepository';
 import { AIService } from './aiService';
 import { ProjectStructureService } from './projectStructureService';
 import { ProjectRepository } from '../repositories/projectRepository';
+import { TDDContextManager } from './tdd/TDDContextManager';
+import { TDDCheckpointManager } from './tdd/TDDCheckpointManager';
+import { TDDRulesValidator } from './tdd/TDDRulesValidator';
+import { TDDStateManager } from './tdd/TDDStateManager';
+import { CursorRulesGenerator } from './tdd/CursorRulesGenerator';
+import path from 'path';
 import { 
   CodingSession, 
   CreateCodingSessionRequest, 
   StartImplementationRequest,
   ProgrammerType,
   ImplementationDashboard,
-  TestStrategy
+  TestStrategy,
+  TDDCycle
 } from '@devflow-studio/shared';
-
-// TDD Cycle interface for strict TDD implementation
-interface TDDCycle {
-  test_index: number;           // Current test being worked on (0-based)
-  phase: 'red' | 'green' | 'refactor';  // Current phase in TDD cycle
-  current_test: string;         // Current test code
-  current_test_name: string;    // Name/description of current test
-  tests_passed: number;         // Number of tests passing
-  total_tests: number;          // Total tests to implement
-  all_tests: Array<{            // All tests for this session
-    name: string;
-    code: string;
-    status: 'pending' | 'red' | 'green' | 'refactored';
-    attempts: number;
-  }>;
-  refactor_count: number;       // Number of refactors done
-  stuck_count: number;          // Number of times stuck in GREEN phase
-}
 
 export class CodingSessionService {
   private sessionRepo: CodingSessionRepository;
@@ -60,6 +49,28 @@ export class CodingSessionService {
       throw new Error('Task must be a user story or a breakdown task');
     }
 
+    // Validate prerequisites using TraceabilityService
+    const { TraceabilityService } = await import('./traceabilityService');
+    const traceabilityService = new TraceabilityService();
+    
+    if (story.type === 'task') {
+      // For breakdown tasks: Must have epic with RFC
+      const validation = await traceabilityService.validateCanProceed((story as any).epic_id || '', 'epic', 'coding');
+      if (!validation.valid) {
+        throw new Error(`Cannot create coding session: ${validation.missing.join(', ')}`);
+      }
+      if (validation.warnings.length > 0) {
+        console.warn(`[CodingSession] Warnings for epic ${(story as any).epic_id}: ${validation.warnings.join(', ')}`);
+      }
+    } else {
+      // For stories: Should have design and RFC (warnings if missing)
+      const validation = await traceabilityService.validateCanProceed(story.id, 'story', 'coding');
+      if (validation.warnings.length > 0) {
+        console.warn(`[CodingSession] Warnings for story ${story.id}: ${validation.warnings.join(', ')}`);
+        // Don't block, but warn - coding can proceed without design/RFC but may be less accurate
+      }
+    }
+
     // Check if session already exists for this story/task
     const existingSession = await this.sessionRepo.findByStoryId(data.story_id);
     if (existingSession && existingSession.status !== 'failed') {
@@ -82,8 +93,46 @@ export class CodingSessionService {
 
     if (testStrategy === 'tdd') {
       // TDD: Generate tests BEFORE implementation
-      // Step 1: Create AI job for TEST GENERATION first
-      const testPrompt = await this.buildTestGenerationPrompt(story, data.programmer_type, data.project_id, true);
+      // Step 1: Get RFC and extract relevant section for selective injection
+      let rfcExcerpt: string | null = null;
+      try {
+        const { RFCGeneratorService } = await import('./rfcGeneratorService');
+        const rfcService = new RFCGeneratorService();
+        
+        // Try to get RFC by epic_id if this is a breakdown task
+        let fullRFC: string | null = null;
+        if (story.type === 'task' && (story as any).epic_id) {
+          const { EpicRepository } = await import('../repositories/epicRepository');
+          const epicRepo = new EpicRepository();
+          const epic = await epicRepo.findById((story as any).epic_id);
+          if (epic && epic.rfc_id) {
+            const rfc = await rfcService.getRFCById(epic.rfc_id);
+            if (rfc && rfc.content) {
+              fullRFC = typeof rfc.content === 'string' ? rfc.content : JSON.stringify(rfc.content);
+            }
+          }
+        } else if (story.type === 'story') {
+          // For user stories, try to get first RFC for the project
+          const rfcs = await rfcService.getRFCsByProject(data.project_id);
+          if (rfcs && rfcs.length > 0) {
+            const rfc = rfcs[0];
+            if (rfc && rfc.content) {
+              fullRFC = typeof rfc.content === 'string' ? rfc.content : JSON.stringify(rfc.content);
+            }
+          }
+        }
+        
+        // Extract relevant section using story title as keyword
+        if (fullRFC && story.title) {
+          rfcExcerpt = this.extractRelevantRFCSection(fullRFC, story.title);
+        }
+      } catch (error) {
+        console.warn(`[CodingSessionService] Could not extract RFC excerpt for story ${story.id}:`, error);
+        // Continue without RFC excerpt - not critical
+      }
+      
+      // Step 2: Create AI job for TEST GENERATION with RFC excerpt
+      const testPrompt = await this.buildTestGenerationPrompt(story, data.programmer_type, data.project_id, true, rfcExcerpt || undefined);
       const testJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -165,15 +214,31 @@ export class CodingSessionService {
    * RESPECTS breakdown_order and priority - implements in correct order
    */
   async startImplementation(data: StartImplementationRequest): Promise<CodingSession[]> {
-    // Get project to create directory structure
+    // Get project to create directory structure (only if it doesn't exist)
     const project = await this.projectRepo.findById(data.project_id);
     if (project) {
       try {
-        // Create recommended directory structure for the tech stack
-        await this.structureService.createProjectStructure(project.base_path, project.tech_stack);
-        console.log(`Created project structure for ${project.name} with tech stack: ${project.tech_stack || 'generic'}`);
+        // Check if project structure already exists by checking for a key directory
+        const { default: fs } = await import('fs/promises');
+        const structureCheckPath = path.join(project.base_path, 'apps');
+        let structureExists = false;
+        try {
+          const stats = await fs.stat(structureCheckPath);
+          structureExists = stats.isDirectory();
+        } catch {
+          // Directory doesn't exist
+        }
+        
+        // Only create structure if it doesn't exist
+        if (!structureExists) {
+          console.log(`[CodingSession] Creating project structure for ${project.name}...`);
+          await this.structureService.createProjectStructure(project.base_path, project.tech_stack);
+          console.log(`[CodingSession] ✅ Created project structure for ${project.name} with tech stack: ${project.tech_stack || 'generic'}`);
+        } else {
+          console.log(`[CodingSession] Project structure already exists for ${project.name}, skipping creation`);
+        }
       } catch (error: any) {
-        console.error(`Failed to create project structure: ${error.message}`);
+        console.error(`[CodingSession] Failed to create project structure: ${error.message}`);
         // Don't fail the implementation if structure creation fails
       }
     }
@@ -433,9 +498,119 @@ export class CodingSessionService {
   }
 
   /**
+   * Load context from previous sessions for the same story/epic using AgentDB
+   */
+  private async loadPreviousSessionContext(projectId: string, storyId: string, currentSessionId?: string): Promise<string> {
+    try {
+      const { Pool } = await import('pg');
+      const pool = (await import('../config/database')).default;
+
+      // Find previous completed sessions for the same story
+      let query = `SELECT id, story_id, status, completed_at 
+                   FROM coding_sessions 
+                   WHERE project_id = $1 
+                   AND story_id = $2 
+                   AND status = 'completed'`;
+      const params: any[] = [projectId, storyId];
+      
+      if (currentSessionId) {
+        query += ` AND id != $3`;
+        params.push(currentSessionId);
+      }
+      
+      query += ` ORDER BY completed_at DESC LIMIT 3`;
+      
+      const previousSessionsResult = await pool.query(query, params);
+
+      if (previousSessionsResult.rows.length === 0) {
+        return ''; // No previous sessions
+      }
+
+      const { AgentDBContextManager } = await import('./agentdb/AgentDBContextManager');
+      const { AgentDBTraceabilityStore } = await import('./agentdb/AgentDBTraceabilityStore');
+      
+      const contexts: string[] = [];
+      
+      for (const prevSession of previousSessionsResult.rows) {
+        try {
+          const prevContextManager = new AgentDBContextManager('', prevSession.id);
+          const prevContext = await prevContextManager.getContext();
+          
+          const prevTraceabilityStore = new AgentDBTraceabilityStore('', prevSession.id);
+          const prevTraceability = await prevTraceabilityStore.getTraceabilityChainAsString();
+          
+          if (prevContext || prevTraceability) {
+            contexts.push(`### Previous Session ${prevSession.id.substring(0, 8)}...\n${prevContext}\n${prevTraceability}`);
+          }
+        } catch (error) {
+          console.warn(`[CodingSessionService] Could not load context from previous session ${prevSession.id}:`, error);
+        }
+      }
+
+      if (contexts.length === 0) {
+        return '';
+      }
+
+      return `## Previous Implementation Context\n\nLearn from previous implementations of this story/epic:\n\n${contexts.join('\n\n---\n\n')}\n\n**IMPORTANT**: Maintain consistency with previous implementations while following current requirements.\n`;
+    } catch (error) {
+      console.error('[CodingSessionService] Error loading previous session context:', error);
+      return '';
+    }
+  }
+
+  /**
+   * Extract relevant RFC section based on keyword
+   * Searches for a section containing the keyword and returns it until the next major header (##)
+   */
+  private extractRelevantRFCSection(fullRFC: string, keyword: string): string | null {
+    if (!fullRFC || !keyword) {
+      return null;
+    }
+
+    const lines = fullRFC.split('\n');
+    let inRelevantSection = false;
+    let sectionContent: string[] = [];
+    let sectionStartIndex = -1;
+
+    // Search for section containing the keyword
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Check if this line contains the keyword (case-insensitive)
+      if (line.toLowerCase().includes(keyword.toLowerCase())) {
+        inRelevantSection = true;
+        sectionStartIndex = i;
+        sectionContent.push(line);
+        continue;
+      }
+
+      // If we're in a relevant section, collect content
+      if (inRelevantSection) {
+        // Stop at next major header (##) that's not part of the current section
+        if (line.startsWith('##') && i > sectionStartIndex + 1) {
+          break;
+        }
+        sectionContent.push(line);
+      }
+    }
+
+    if (sectionContent.length === 0) {
+      return null;
+    }
+
+    return sectionContent.join('\n');
+  }
+
+  /**
    * Build test generation prompt
    */
-  private async buildTestGenerationPrompt(story: any, programmerType: ProgrammerType, projectId: string, unitTestsOnly: boolean = true): Promise<string> {
+  private async buildTestGenerationPrompt(
+    story: any, 
+    programmerType: ProgrammerType, 
+    projectId: string, 
+    unitTestsOnly: boolean = true,
+    rfcExcerpt?: string
+  ): Promise<string> {
     // Get full context from prompt bundle (includes PRD, RFC, Breakdown, Design, Stories)
     const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
     
@@ -446,50 +621,28 @@ export class CodingSessionService {
     lines.push(`# Test Generation Task: ${story.title}\n`);
     lines.push(`**Programmer Type**: ${programmerType}\n`);
     lines.push(`**Priority**: ${story.priority}\n\n`);
+    
+    // Inject RFC Contract section if excerpt is provided
+    if (rfcExcerpt) {
+      lines.push(`## RFC Contract (Technical Specifications)\n\n`);
+      lines.push(`**CRITICAL**: The following RFC section contains the technical specifications for this functionality.\n`);
+      lines.push(`Tests MUST validate these specifications (API contracts, database schema, interfaces, etc.).\n\n`);
+      lines.push(`\`\`\`\n`);
+      lines.push(rfcExcerpt);
+      lines.push(`\n\`\`\`\n\n`);
+    }
+    
     lines.push(`**CRITICAL - SCOPE LIMITATION:**\n`);
     lines.push(`You MUST generate tests ONLY for the CURRENT TASK/STORY above: "${story.title}"\n`);
     lines.push(`- Do NOT generate tests for other user stories mentioned in the context\n`);
     lines.push(`- Do NOT generate tests for the entire project\n`);
     lines.push(`- Focus EXCLUSIVELY on this specific task/story and its acceptance criteria\n`);
     lines.push(`- The context above (PRD, RFC, other stories) is for REFERENCE ONLY to understand the project context\n`);
-    lines.push(`- Your task is to test ONLY the functionality described in the CURRENT TASK/STORY section\n\n`);
-
-    // Get related User Story and RFC if this is a breakdown task
-    let relatedUserStory: any = null;
-    let relatedRFC: any = null;
-    
-    if (story.type === 'task' && (story as any).epic_id) {
-      // Get epic to find RFC
-      const { EpicRepository } = await import('../repositories/epicRepository');
-      const epicRepo = new EpicRepository();
-      const epic = await epicRepo.findById((story as any).epic_id);
-      
-      if (epic && epic.rfc_id) {
-        // Get RFC
-        const { RFCGeneratorService } = await import('./rfcGeneratorService');
-        const rfcService = new RFCGeneratorService();
-        relatedRFC = await rfcService.getRFCById(epic.rfc_id);
-      }
-      
-      // Try to find related user story through epic
-      // Note: User stories don't have epic_id directly, but breakdown tasks do
-      // We'll search for user stories in the same project that might be related
-      const { Pool } = await import('pg');
-      const pool = (await import('../config/database')).default;
-      const storiesResult = await pool.query(
-        `SELECT t.* FROM tasks t 
-         WHERE t.project_id = $1 
-         AND t.type = 'story'
-         ORDER BY t.priority DESC
-         LIMIT 1`,
-        [projectId]
-      );
-      if (storiesResult.rows.length > 0) {
-        relatedUserStory = storiesResult.rows[0];
-      }
-    } else if (story.type === 'story') {
-      relatedUserStory = story;
+    lines.push(`- Your task is to test ONLY the functionality described in the CURRENT TASK/STORY section\n`);
+    if (rfcExcerpt) {
+      lines.push(`- Tests MUST validate the RFC Contract specifications above (API contracts, database schema, etc.)\n`);
     }
+    lines.push(`\n`);
 
     // Add specific task details if it's a breakdown task
     if (story.type === 'task' && (story as any).epic_id) {
@@ -506,38 +659,15 @@ export class CodingSessionService {
         lines.push(`**Story Points**: ${(story as any).story_points} (from breakdown estimation)\n`);
       }
       
-      // Add related User Story information
-      if (relatedUserStory) {
-        lines.push(`\n## Related User Story\n`);
-        lines.push(`**Story**: ${relatedUserStory.title}\n`);
-        if (relatedUserStory.description) {
-          lines.push(`**Description**: ${relatedUserStory.description}\n`);
-        }
-        if (relatedUserStory.acceptance_criteria && Array.isArray(relatedUserStory.acceptance_criteria)) {
-          lines.push(`**Acceptance Criteria**:\n`);
-          relatedUserStory.acceptance_criteria.forEach((ac: any, idx: number) => {
-            const acText = typeof ac === 'string' ? ac : (ac.criterion || ac);
-            lines.push(`  ${idx + 1}. ${acText}\n`);
-          });
-        }
-        lines.push(`\n**CRITICAL**: Tests MUST cover the acceptance criteria above from the related User Story.\n\n`);
-      }
-      
-      // Add related RFC information
-      if (relatedRFC) {
-        lines.push(`## Related RFC (Technical Design)\n`);
-        lines.push(`**RFC**: ${relatedRFC.title}\n`);
-        lines.push(`\n**CRITICAL**: Tests MUST validate RFC specifications (API contracts, database schema, etc.).\n\n`);
-      }
-      
       lines.push(`\n**CRITICAL**: This task is part of a larger Epic. You MUST:\n`);
-      lines.push(`- Reference the RFC (Technical Design) section above for API contracts, database schema, and architecture\n`);
+      if (rfcExcerpt) {
+        lines.push(`- Follow the RFC Contract (Technical Specifications) section above EXACTLY\n`);
+      } else {
+        lines.push(`- Reference the RFC (Technical Design) section in the context above for API contracts, database schema, and architecture\n`);
+      }
       lines.push(`- Reference the Epic & Breakdown section above to understand dependencies and order\n`);
       lines.push(`- Reference User Flows & Design for UI/UX implementation\n`);
       lines.push(`- Follow the breakdown order and ensure compatibility with other tasks in the Epic\n`);
-      if (relatedUserStory) {
-        lines.push(`- Cover ALL acceptance criteria from the Related User Story above\n`);
-      }
       lines.push(`\n`);
     }
 
@@ -564,15 +694,7 @@ export class CodingSessionService {
       lines.push(`${structure.description}\n\n`);
       lines.push(`**IMPORTANT: Save test files in the appropriate directory:**\n`);
       const testPath = this.structureService.getRecommendedPath('', 'test', project.tech_stack);
-      
-      // Get story title for file naming (traditional TDD: one file per functionality)
-      const storyTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      const testFileName = `${storyTitle}.test.js`;
-      
-      lines.push(`- **Unit tests: Save in \`tests/unit/${testFileName}\`**\n`);
-      lines.push(`- **CRITICAL:** All tests for this functionality must be in the SAME file: \`tests/unit/${testFileName}\`\n`);
-      lines.push(`- If the file already exists, ADD your tests to it (do NOT overwrite)\n`);
-      lines.push(`- This follows traditional TDD: iterate on the same test file\n`);
+      lines.push(`- Unit tests: Save in \`${testPath}/unit/\` directory\n`);
       lines.push(`- Integration tests: Save in \`${testPath}/integration/\` directory (if generating integration tests)\n`);
       lines.push(`- E2E tests: Save in \`tests/e2e/\` directory (if generating e2e tests)\n`);
       lines.push(`- Follow the naming convention: \`*.test.js\` or \`*.spec.js\`\n\n`);
@@ -659,14 +781,42 @@ export class CodingSessionService {
   /**
    * Build implementation prompt based on story, programmer type, and generated tests
    */
-  private async buildCodingPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string): Promise<string> {
+  private async buildCodingPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string, sessionId?: string): Promise<string> {
     // Get full context from prompt bundle (includes PRD, RFC, Breakdown, Design, Stories)
     const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
+    
+    // Get traceability chain if sessionId is provided
+    let traceabilityChain = '';
+    if (sessionId) {
+      try {
+        const { AgentDBTraceabilityStore } = await import('./agentdb/AgentDBTraceabilityStore');
+        const project = await this.projectRepo.findById(projectId);
+        if (project) {
+          const traceabilityStore = new AgentDBTraceabilityStore(project.base_path, sessionId);
+          traceabilityChain = await traceabilityStore.getTraceabilityChainAsString();
+        }
+      } catch (error) {
+        console.warn('[CodingSessionService] Could not load traceability chain:', error);
+      }
+    }
+
+    // Load previous session context if sessionId is provided
+    let previousContext = '';
+    if (sessionId) {
+      previousContext = await this.loadPreviousSessionContext(projectId, story.id);
+    }
     
     const lines: string[] = [];
 
     lines.push(promptBundle);
     lines.push('\n---\n');
+    
+    // Add traceability chain if available
+    if (traceabilityChain) {
+      lines.push(traceabilityChain);
+      lines.push('\n---\n');
+    }
+    
     lines.push(`# Coding Task: ${story.title}\n`);
     lines.push(`**Programmer Type**: ${programmerType}\n`);
     lines.push(`**Priority**: ${story.priority}\n\n`);
@@ -876,6 +1026,9 @@ export class CodingSessionService {
       lines.push(`2. Implement the code to make all tests pass`);
       lines.push(`3. Ensure code follows the project's architecture and coding standards`);
       lines.push(`4. Write clean, maintainable, and well-documented code`);
+      if (traceabilityChain) {
+        lines.push(`5. Maintain consistency with the traceability chain above`);
+      }
     } else {
       lines.push(`\nImplement this task following:`);
       lines.push(`- The RFC (Technical Design) specifications above`);
@@ -883,7 +1036,16 @@ export class CodingSessionService {
       lines.push(`- User Flows & Design for UI components`);
       lines.push(`- Breakdown order and dependencies`);
       lines.push(`- Project's coding standards and best practices`);
+      if (traceabilityChain) {
+        lines.push(`- The traceability chain (PRD → RFC → Breakdown) for consistency`);
+      }
       lines.push(`\nWrite clean, maintainable, and well-documented code that aligns with all context provided above.`);
+    }
+
+    // Add previous context if available
+    if (previousContext) {
+      lines.push('\n---\n');
+      lines.push(previousContext);
     }
 
     return lines.join('\n');
@@ -907,8 +1069,8 @@ export class CodingSessionService {
       throw new Error('Story not found');
     }
 
-    // Create AI job for implementation
-    const implementationPrompt = await this.buildCodingPrompt(story, session.programmer_type, session.project_id, (session as any).tests_output);
+    // Create AI job for implementation (include sessionId for traceability and previous context)
+    const implementationPrompt = await this.buildCodingPrompt(story, session.programmer_type, session.project_id, (session as any).tests_output, sessionId);
     const implementationJob = await this.aiService.createAIJob({
       project_id: session.project_id,
       task_id: session.story_id,
@@ -955,8 +1117,8 @@ export class CodingSessionService {
 
   /**
    * Initialize TDD cycle after tests are generated
-   * Starts directly with batch GREEN phase (no RED - tests will obviously fail before implementation)
-   * Loads context bundle once and caches it for reuse
+   * Creates context management system with all managers and files
+   * Implements "all-at-once" TDD approach with single AI job
    */
   async initializeTDDCycle(sessionId: string, generatedTests: Array<{name: string; code: string}>): Promise<void> {
     const { Pool } = await import('pg');
@@ -966,7 +1128,7 @@ export class CodingSessionService {
       throw new Error('No tests generated for TDD cycle');
     }
 
-    console.log(`[TDD] Initializing optimized TDD cycle for session ${sessionId} with ${generatedTests.length} tests`);
+    console.log(`[TDD] Initializing CONTEXT-MANAGED TDD for session ${sessionId} with ${generatedTests.length} tests`);
 
     const session = await this.sessionRepo.findById(sessionId);
     if (!session) {
@@ -978,43 +1140,232 @@ export class CodingSessionService {
       throw new Error('Story not found');
     }
 
-    // Load context bundle ONCE and cache it
+    const project = await this.projectRepo.findById(session.project_id);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    // 1. Load context bundle ONCE
     const contextBundle = await this.aiService.buildPromptBundle(session.project_id, story.id);
 
-    // Initialize TDD cycle state with batch processing
-    const batchSize = 3; // Process 3 tests per AI job
-    const tddCycle: TDDCycle = {
-      test_index: 0,
-      phase: 'green' as const,  // Start directly with GREEN (no RED phase)
-      batch_size: batchSize,
-      current_batch_tests: generatedTests.slice(0, batchSize).map(t => t.name),
-      tests_passed: 0,
-      total_tests: generatedTests.length,
-      all_tests: generatedTests.map(t => ({
+    // 2. Store full traceability chain in AgentDB
+    const { AgentDBTraceabilityStore } = await import('./agentdb/AgentDBTraceabilityStore');
+    const traceabilityStore = new AgentDBTraceabilityStore(project.base_path, sessionId);
+    await traceabilityStore.storeTraceabilityChain(story.id);
+    console.log(`[TDD] ✅ Stored traceability chain in AgentDB`);
+
+    // 3. Initialize Context Manager (now uses AgentDB)
+    const contextManager = new TDDContextManager(project.base_path, sessionId);
+    await contextManager.initializeTDDContext(story, generatedTests, contextBundle);
+    console.log(`[TDD] ✅ Initialized context in AgentDB`);
+
+    // 4. Initialize Checkpoint Manager (filesystem - unchanged)
+    const checkpointManager = new TDDCheckpointManager(project.base_path, sessionId);
+    await checkpointManager.createCheckpoint('initial', 0);
+    console.log(`[TDD] ✅ Created initial checkpoint`);
+
+    // 5. Create Rules (now uses AgentDB)
+    const rulesValidator = new TDDRulesValidator(project.base_path, sessionId);
+    await rulesValidator.createRulesFile(project.base_path, sessionId, generatedTests, story);
+    console.log(`[TDD] ✅ Created rules in AgentDB`);
+
+    // 6. Initialize State Manager (now uses AgentDB)
+    const stateManager = new TDDStateManager(project.base_path, sessionId);
+    await stateManager.saveState({
+      session_id: sessionId,
+      story,
+      tests: generatedTests.map(t => ({
         name: t.name,
         code: t.code,
-        status: 'pending' as const,
-        attempts: 0
+        status: 'pending' as const
       })),
-      refactor_count: 0,
-      stuck_count: 0,
-      context_bundle: contextBundle
-    };
+      implementation_files: [],
+      current_phase: 'green',
+      current_batch: 0,
+      total_batches: 1,
+      history: [{
+        timestamp: new Date().toISOString(),
+        phase: 'init',
+        action: 'TDD session initialized with AgentDB context management',
+        result: 'success',
+        files_modified: []
+      }]
+    });
+    console.log(`[TDD] ✅ Initialized state in AgentDB`);
 
-    // Save TDD cycle state
+    // 6. Create Cursor Rules (filesystem - unchanged, AI needs it)
+    const rulesGenerator = new CursorRulesGenerator();
+    await rulesGenerator.createCursorRules(
+      project.base_path, 
+      generatedTests.length,
+      ['src/services', 'src/models', 'src/utils']
+    );
+    console.log(`[TDD] ✅ Created .cursorrules`);
+
+    // 7. Store context bundle in DB
     await pool.query(
       `UPDATE coding_sessions SET 
-       status = $1, 
+       status = $1,
        tdd_cycle = $2::jsonb,
        test_progress = $3
        WHERE id = $4`,
-      ['tdd_green', JSON.stringify(tddCycle), 0, sessionId]
+      ['tdd_ready', JSON.stringify({ context_bundle: contextBundle }), 0, sessionId]
     );
 
-    console.log(`[TDD] Starting batch GREEN phase with ${tddCycle.current_batch_tests.length} tests`);
+    console.log(`[TDD] 🎯 All context initialized in AgentDB. Starting implementation...`);
 
-    // Start with batch GREEN phase: Implement code for first batch
-    await this.executeBatchGREEN(sessionId, tddCycle);
+    // 8. Execute ALL-AT-ONCE TDD (single job, no iterations)
+    await this.executeAllAtOnceTDD(sessionId, generatedTests, contextManager, checkpointManager, stateManager, traceabilityStore);
+  }
+
+  /**
+   * Execute all-at-once TDD implementation
+   * Creates a single AI job to implement all tests at once
+   */
+  async executeAllAtOnceTDD(
+    sessionId: string,
+    generatedTests: Array<{name: string; code: string}>,
+    contextManager: TDDContextManager,
+    checkpointManager: TDDCheckpointManager,
+    stateManager: TDDStateManager,
+    traceabilityStore?: any
+  ): Promise<void> {
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    console.log(`[TDD-ALL-AT-ONCE] Implementing all ${generatedTests.length} tests in single job`);
+
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) {
+      throw new Error('Story not found');
+    }
+
+    const project = await this.projectRepo.findById(session.project_id);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    // Get context from AgentDB
+    const tddContext = await contextManager.getContext();
+
+    // Get traceability chain from AgentDB
+    let traceabilityChain = '';
+    if (traceabilityStore) {
+      traceabilityChain = await traceabilityStore.getTraceabilityChainAsString();
+    }
+
+    // Load context from previous sessions for same story/epic (if any)
+    let previousContext = '';
+    try {
+      previousContext = await this.loadPreviousSessionContext(session.project_id, story.id, sessionId);
+    } catch (error) {
+      console.warn('[TDD] Could not load previous session context:', error);
+    }
+
+    // Build prompt that includes AgentDB context and traceability
+    const prompt = `# TDD Implementation - Complete Session
+
+## 📋 CRITICAL INSTRUCTIONS
+
+**Context is stored in AgentDB. The following information is available:**
+
+${traceabilityChain}
+
+## 🎯 Your Task
+
+Implement code to make ALL ${generatedTests.length} tests pass.
+
+**All tests and constraints are stored in AgentDB context - use the context provided below.**
+
+## ⚠️ CRITICAL CONSTRAINTS
+
+- Tests are LOCKED (cannot modify)
+- Implement ONLY what's needed to pass tests
+- Keep all tests passing
+- Follow traceability chain (PRD → RFC → Breakdown)
+- Maintain consistency with previous implementations
+- Do NOT generate new tests
+- Do NOT modify existing tests
+- Do NOT change architecture approach
+${project?.tech_stack ? `- **TECH STACK: ${project.tech_stack}** - Use ONLY this stack, NO mixing of languages/file extensions\n- **FILE EXTENSIONS**: For TypeScript projects, use .ts only (NOT .js), for JavaScript use .js only` : ''}
+
+## 📦 AgentDB Context
+
+${tddContext}
+
+${previousContext ? `## 🔄 Previous Session Context\n\n${previousContext}\n\n` : ''}
+
+## ✅ Expected Output
+
+1. Implementation files in src/
+2. ALL ${generatedTests.length} tests passing
+3. Clean, refactored code
+4. No new tests generated
+5. No modifications to existing tests
+6. Consistency with traceability chain
+${project?.tech_stack?.toLowerCase().includes('typescript') ? '7. **ALL implementation files must be .ts** (TypeScript), NO .js files' : ''}
+
+## 🚨 VALIDATION
+
+Your changes will be validated against:
+- Traceability chain (must align with PRD, RFC, Breakdown)
+- AgentDB rules (tests locked, directories allowed)
+- Previous session context (consistency)
+- Tech stack consistency (no mixing file extensions)
+
+Violations will cause REJECTION.
+
+Start implementation now.
+`;
+
+    // Create single AI job
+    const implJob = await this.aiService.createAIJob({
+      project_id: session.project_id,
+      task_id: session.story_id,
+      provider: 'cursor',
+      mode: 'agent',
+      prompt: prompt,
+    });
+
+    await pool.query(
+      `UPDATE coding_sessions SET 
+       status = $1,
+       implementation_job_id = $2
+       WHERE id = $3`,
+      ['tdd_implementing', implJob.id, sessionId]
+    );
+
+    await pool.query(
+      `UPDATE ai_jobs SET args = args || $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ 
+        coding_session_id: sessionId, 
+        phase: 'tdd_all_at_once',
+        total_tests: generatedTests.length,
+        validate_tests: true,
+        context_files: [
+          '.tdd-context.md',
+          '.tdd-rules.json',
+          '.tdd-state.json',
+          '.cursorrules'
+        ]
+      }), implJob.id]
+    );
+
+    console.log(`[TDD-ALL-AT-ONCE] Created implementation job ${implJob.id}`);
+    
+    // Update state
+    await stateManager.appendHistory({
+      timestamp: new Date().toISOString(),
+      phase: 'implementation',
+      action: `Started all-at-once implementation for ${generatedTests.length} tests`,
+      result: 'success',
+      files_modified: []
+    });
   }
 
   /**
@@ -1065,8 +1416,46 @@ export class CodingSessionService {
       ['tdd_green', JSON.stringify(tddCycle), progress, sessionId]
     );
 
+    // Get RFC and extract relevant section for selective injection
+    let rfcExcerpt: string | null = null;
+    try {
+      const { RFCGeneratorService } = await import('./rfcGeneratorService');
+      const rfcService = new RFCGeneratorService();
+      
+      // Try to get RFC by epic_id if this is a breakdown task
+      let fullRFC: string | null = null;
+      if (story.type === 'task' && (story as any).epic_id) {
+        const { EpicRepository } = await import('../repositories/epicRepository');
+        const epicRepo = new EpicRepository();
+        const epic = await epicRepo.findById((story as any).epic_id);
+        if (epic && epic.rfc_id) {
+          const rfc = await rfcService.getRFCById(epic.rfc_id);
+          if (rfc && rfc.content) {
+            fullRFC = typeof rfc.content === 'string' ? rfc.content : JSON.stringify(rfc.content);
+          }
+        }
+      } else if (story.type === 'story') {
+        // For user stories, try to get first RFC for the project
+        const rfcs = await rfcService.getRFCsByProject(session.project_id);
+        if (rfcs && rfcs.length > 0) {
+          const rfc = rfcs[0];
+          if (rfc && rfc.content) {
+            fullRFC = typeof rfc.content === 'string' ? rfc.content : JSON.stringify(rfc.content);
+          }
+        }
+      }
+      
+      // Extract relevant section using story title as keyword
+      if (fullRFC && story.title) {
+        rfcExcerpt = this.extractRelevantRFCSection(fullRFC, story.title);
+      }
+    } catch (error) {
+      console.warn(`[CodingSessionService] Could not extract RFC excerpt for GREEN phase:`, error);
+      // Continue without RFC excerpt - not critical
+    }
+
     // Build lightweight GREEN phase prompt (uses cached context)
-    const greenPrompt = await this.buildBatchGREENPhasePrompt(session.project_id, story, batchTests, tddCycle);
+    const greenPrompt = await this.buildBatchGREENPhasePrompt(session.project_id, story, batchTests, tddCycle, rfcExcerpt || undefined);
 
     // Create AI job for batch GREEN phase
     const greenJob = await this.aiService.createAIJob({
@@ -1147,22 +1536,7 @@ export class CodingSessionService {
 
     // Calculate progress: 50% (implementation) + up to 30% (refactoring) = max 80%
     // Ensure it doesn't exceed 100
-    // Validate inputs to prevent division by zero or invalid calculations
-    if (!tddCycle.total_tests || tddCycle.total_tests <= 0) {
-      console.error(`[TDD-REFACTOR] Invalid total_tests: ${tddCycle.total_tests}`);
-      throw new Error(`Invalid total_tests: ${tddCycle.total_tests}`);
-    }
-    
-    const progressRatio = Math.min(1, testsCompleted / tddCycle.total_tests); // Cap at 1.0
-    const calculatedProgress = Math.floor(50 + progressRatio * 30);
-    const progress = Math.min(100, Math.max(0, calculatedProgress)); // Ensure 0-100 range
-    
-    console.log(`[TDD-REFACTOR] Progress calculation: testsCompleted=${testsCompleted}, total_tests=${tddCycle.total_tests}, ratio=${progressRatio}, calculated=${calculatedProgress}, final=${progress}`);
-    
-    if (progress < 0 || progress > 100) {
-      console.error(`[TDD-REFACTOR] Invalid progress value: ${progress}. Clamping to valid range.`);
-      throw new Error(`Progress calculation error: ${progress} is outside valid range [0-100]`);
-    }
+    const progress = Math.min(100, Math.floor(50 + (testsCompleted / tddCycle.total_tests) * 30));
     
     await pool.query(
       `UPDATE coding_sessions SET 
@@ -1298,58 +1672,6 @@ export class CodingSessionService {
     await this.executeBatchGREEN(sessionId, tddCycle);
   }
 
-  /**
-   * Build RED Phase prompt: Execute test and verify it FAILS
-   */
-  private async buildREDPhasePrompt(projectId: string, story: any, tddCycle: TDDCycle): Promise<string> {
-    const lines: string[] = [];
-    const project = await this.projectRepo.findById(projectId);
-    
-    lines.push(`# TDD RED PHASE: Verify Test Fails\n\n`);
-    lines.push(`## Current Test (${tddCycle.test_index + 1}/${tddCycle.total_tests})\n\n`);
-    lines.push(`**Test Name:** ${tddCycle.current_test_name}\n\n`);
-    lines.push(`**Test Code:**\n`);
-    lines.push(`\`\`\`\n${tddCycle.current_test}\n\`\`\`\n\n`);
-    
-    lines.push(`## RED Phase Objective\n\n`);
-    lines.push(`**CRITICAL - RED Phase Requirements:**\n`);
-    lines.push(`1. Save the test code to the appropriate test file\n`);
-    lines.push(`2. Execute the test\n`);
-    lines.push(`3. **The test MUST FAIL** (this validates the test is working)\n`);
-    lines.push(`4. Verify the failure is because the feature is NOT implemented (not a syntax error)\n`);
-    lines.push(`5. Report the test failure with clear error message\n\n`);
-    
-    if (project?.tech_stack) {
-      lines.push(`## Tech Stack\n`);
-      lines.push(`**Stack:** ${project.tech_stack}\n`);
-      lines.push(`Use appropriate test runner for this stack.\n\n`);
-    }
-    
-    lines.push(`## Instructions\n\n`);
-    lines.push(`1. **Save Test:** Write the test code to the correct location in the project\n`);
-    lines.push(`2. **Run Test:** Execute the test using the project's test runner\n`);
-    lines.push(`3. **Verify Failure:** The test MUST fail. If it passes without implementation, the test is invalid.\n`);
-    lines.push(`4. **Report:** Provide:\n`);
-    lines.push(`   - Test file path\n`);
-    lines.push(`   - Test execution command\n`);
-    lines.push(`   - Test output showing FAILURE\n`);
-    lines.push(`   - Reason for failure (should be "feature not implemented")\n\n`);
-    
-    lines.push(`## Expected Output\n\n`);
-    lines.push(`\`\`\`json\n`);
-    lines.push(`{\n`);
-    lines.push(`  "phase": "red",\n`);
-    lines.push(`  "test_file": "path/to/test.spec.js",\n`);
-    lines.push(`  "test_failed": true,\n`);
-    lines.push(`  "failure_reason": "Function 'calculateTotal' is not defined",\n`);
-    lines.push(`  "test_output": "... test runner output ..."\n`);
-    lines.push(`}\n`);
-    lines.push(`\`\`\`\n\n`);
-    
-    lines.push(`**REMEMBER:** A failing test in RED phase is GOOD. It means the test is working correctly.\n`);
-    
-    return lines.join('');
-  }
 
   /**
    * Build Batch GREEN Phase prompt (lightweight, uses cached context)
@@ -1359,7 +1681,8 @@ export class CodingSessionService {
     projectId: string, 
     story: any, 
     batchTests: Array<{name: string; code: string; status: string; attempts: number}>, 
-    tddCycle: TDDCycle
+    tddCycle: TDDCycle,
+    rfcExcerpt?: string
   ): Promise<string> {
     const lines: string[] = [];
     const project = await this.projectRepo.findById(projectId);
@@ -1381,18 +1704,15 @@ export class CodingSessionService {
       lines.push(`**Description:** ${story.description}\n\n`);
     }
     
-    // Get story title for test file path (traditional TDD: one file per functionality)
-    const storyTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const testFilePath = `tests/unit/${storyTitle}.test.js`;
-    
-    lines.push(`## Existing Test File\n\n`);
-    lines.push(`**CRITICAL - Traditional TDD Structure:**\n`);
-    lines.push(`- Tests already exist in: \`${testFilePath}\`\n`);
-    lines.push(`- Do NOT create new test files\n`);
-    lines.push(`- Work with the existing test file: \`${testFilePath}\`\n`);
-    lines.push(`- Implement code to make ALL tests in this file pass\n`);
-    lines.push(`- If you need to add more test cases, add them to the SAME file\n`);
-    lines.push(`- This follows traditional TDD: iterate on the same test file until reasonable coverage\n\n`);
+    // Inject RFC Contract section if excerpt is provided
+    if (rfcExcerpt) {
+      lines.push(`## RFC Contract (Technical Specifications)\n\n`);
+      lines.push(`**CRITICAL**: The following RFC section contains the technical specifications for this functionality.\n`);
+      lines.push(`Implementation MUST follow these specifications (API contracts, database schema, interfaces, etc.).\n\n`);
+      lines.push(`\`\`\`\n`);
+      lines.push(rfcExcerpt);
+      lines.push(`\n\`\`\`\n\n`);
+    }
     
     const batchNum = Math.floor(tddCycle.test_index / tddCycle.batch_size) + 1;
     lines.push(`## Tests to Implement (Batch ${batchNum}/${Math.ceil(tddCycle.total_tests / tddCycle.batch_size)})\n\n`);
@@ -1418,7 +1738,7 @@ export class CodingSessionService {
     lines.push(`5. Report success with test execution output\n\n`);
     
     // Show previous progress
-    const passedTests = tddCycle.all_tests.slice(0, tddCycle.test_index).filter(t => t.status === 'green' || t.status === 'refactored');
+    const passedTests = tddCycle.all_tests.slice(0, tddCycle.test_index).filter((t: { status: string }) => t.status === 'green' || t.status === 'refactored');
     if (passedTests.length > 0) {
       lines.push(`## Previous Tests (Already Passing: ${passedTests.length})\n\n`);
       lines.push(`**IMPORTANT:** Your implementation must NOT break these existing tests.\n\n`);
@@ -1456,19 +1776,7 @@ export class CodingSessionService {
     lines.push(promptBundle);
     lines.push(`\n---\n\n`);
     
-    // Get story title for test file path (traditional TDD: one file per functionality)
-    const storyTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const testFilePath = `tests/unit/${storyTitle}.test.js`;
-    
     lines.push(`# TDD REFACTOR PHASE: Improve Code Quality\n\n`);
-    
-    lines.push(`## Existing Test File\n\n`);
-    lines.push(`**CRITICAL - Traditional TDD Structure:**\n`);
-    lines.push(`- Tests exist in: \`${testFilePath}\`\n`);
-    lines.push(`- All tests in \`${testFilePath}\` must continue passing after refactoring\n`);
-    lines.push(`- Do NOT modify the test file unless necessary for refactoring\n`);
-    lines.push(`- This follows traditional TDD: refactor code while keeping all tests green\n\n`);
-    
     lines.push(`## Context\n\n`);
     lines.push(`**Tests Completed:** ${tddCycle.test_index + 1}/${tddCycle.total_tests}\n`);
     lines.push(`**Refactor Count:** ${tddCycle.refactor_count}\n\n`);
@@ -1476,7 +1784,7 @@ export class CodingSessionService {
     lines.push(`## REFACTOR Phase Objective\n\n`);
     lines.push(`**CRITICAL - REFACTOR Phase Requirements:**\n`);
     lines.push(`1. Improve code quality without changing behavior\n`);
-    lines.push(`2. ALL tests in \`${testFilePath}\` MUST continue to pass\n`);
+    lines.push(`2. ALL tests MUST continue to pass\n`);
     lines.push(`3. Apply clean code principles\n`);
     lines.push(`4. Remove duplication\n`);
     lines.push(`5. Improve names, structure, and readability\n\n`);
@@ -1513,7 +1821,7 @@ export class CodingSessionService {
     lines.push(`## Tests That Must Pass\n\n`);
     const completedTests = tddCycle.all_tests.slice(0, tddCycle.test_index + 1);
     lines.push(`**All ${completedTests.length} tests must remain GREEN:**\n`);
-    completedTests.forEach((t, i) => {
+    completedTests.forEach((t: { name: string }, i: number) => {
       lines.push(`${i + 1}. ✅ ${t.name}\n`);
     });
     lines.push(`\n`);

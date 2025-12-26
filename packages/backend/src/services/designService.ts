@@ -2,6 +2,7 @@ import { UserFlowRepository } from '../repositories/userFlowRepository';
 import { PrototypeRepository } from '../repositories/prototypeRepository';
 import { PRDRepository } from '../repositories/prdRepository';
 import { TaskRepository } from '../repositories/taskRepository';
+import { StoryUserFlowRepository } from '../repositories/storyUserFlowRepository';
 import { AIService } from './aiService';
 import { GenerateUserFlowRequest, AnalyzePrototypeRequest, UserFlow, Prototype } from '@devflow-studio/shared';
 import { createFile, ensureDirectory } from '../utils/fileSystem';
@@ -14,6 +15,7 @@ export class DesignService {
   private prototypeRepo: PrototypeRepository;
   private prdRepo: PRDRepository;
   private taskRepo: TaskRepository;
+  private storyUserFlowRepo: StoryUserFlowRepository;
   private aiService: AIService;
 
   constructor() {
@@ -21,6 +23,7 @@ export class DesignService {
     this.prototypeRepo = new PrototypeRepository();
     this.prdRepo = new PRDRepository();
     this.taskRepo = new TaskRepository();
+    this.storyUserFlowRepo = new StoryUserFlowRepository();
     this.aiService = new AIService();
   }
 
@@ -80,7 +83,33 @@ export class DesignService {
       user_flow_id: userFlow.id,
       phase: 'user_flow_generation',
       skipBundle: true,
+      story_ids: request.story_ids || [], // Pass story IDs to worker for linking
     });
+
+    // Create story_user_flows relationships if story_ids provided
+    if (request.story_ids && request.story_ids.length > 0) {
+      for (const storyId of request.story_ids) {
+        try {
+          await this.storyUserFlowRepo.create(storyId, userFlow.id);
+          console.log(`[DesignService] Linked story ${storyId} to user flow ${userFlow.id}`);
+        } catch (error: any) {
+          console.error(`[DesignService] Error linking story ${storyId} to user flow ${userFlow.id}:`, error.message);
+          // Continue with other stories even if one fails
+        }
+      }
+    } else {
+      // If no specific stories provided, link all stories for the project
+      const allStories = await this.taskRepo.findByProjectIdAndType(request.project_id, 'story');
+      for (const story of allStories) {
+        try {
+          await this.storyUserFlowRepo.create(story.id, userFlow.id);
+          console.log(`[DesignService] Linked story ${story.id} to user flow ${userFlow.id}`);
+        } catch (error: any) {
+          console.error(`[DesignService] Error linking story ${story.id} to user flow ${userFlow.id}:`, error.message);
+          // Continue with other stories even if one fails
+        }
+      }
+    }
 
     return {
       job_id: aiJob.id,

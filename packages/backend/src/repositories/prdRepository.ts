@@ -65,7 +65,7 @@ export class PRDRepository {
 
   async delete(id: string): Promise<boolean> {
     const result = await pool.query('DELETE FROM prd_documents WHERE id = $1', [id]);
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   private mapRowToPRD(row: any): PRDDocument {

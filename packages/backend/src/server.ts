@@ -21,6 +21,7 @@ import rfcRouter from './routes/rfc';
 import breakdownRouter from './routes/breakdown';
 import designRouter from './routes/design';
 import reviewRouter from './routes/review';
+import traceabilityRouter from './routes/traceability';
 import { validateProjectPath } from './middleware/validation';
 import { auditLog } from './middleware/audit';
 
@@ -57,6 +58,7 @@ app.use('/api/rfc', rfcRouter);
 app.use('/api/breakdown', breakdownRouter);
 app.use('/api/design', designRouter);
 app.use('/api/review', reviewRouter);
+app.use('/api/traceability', traceabilityRouter);
 
 // Health check
 app.get('/health', (req, res) => {

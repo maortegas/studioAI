@@ -258,18 +258,45 @@ export class ProjectStructureService {
   async createProjectStructure(projectBasePath: string, techStack?: string): Promise<void> {
     const structure = this.getRecommendedStructure(techStack);
     
+    console.log(`[ProjectStructure] Verifying project structure for ${projectBasePath}`);
+    let createdCount = 0;
+    let existingCount = 0;
+    
     // Create all directories
     for (const dir of structure.directories) {
       const fullPath = path.join(projectBasePath, dir);
       try {
+        // Check if directory already exists before creating
+        let directoryExisted = false;
+        try {
+          const stats = await fs.stat(fullPath);
+          directoryExisted = stats.isDirectory();
+        } catch {
+          // Directory doesn't exist, will be created
+        }
+        
+        // Create directory (recursive: true won't error if parent exists)
         await fs.mkdir(fullPath, { recursive: true });
-        console.log(`Created directory: ${fullPath}`);
+        
+        // Only log if directory was actually created (didn't exist before)
+        if (!directoryExisted) {
+          createdCount++;
+          console.log(`  ✅ Created: ${dir}`);
+        } else {
+          existingCount++;
+        }
       } catch (error: any) {
         // Ignore if directory already exists
         if (error.code !== 'EEXIST') {
-          console.error(`Error creating directory ${fullPath}:`, error);
+          console.error(`  ❌ Error creating ${dir}:`, error.message);
         }
       }
+    }
+    
+    if (createdCount > 0) {
+      console.log(`[ProjectStructure] ✅ Created ${createdCount} new director${createdCount === 1 ? 'y' : 'ies'}, ${existingCount} already existed`);
+    } else {
+      console.log(`[ProjectStructure] ℹ️  All ${existingCount} directories already exist, no changes needed`);
     }
     
     // Create a .gitkeep file in empty directories to ensure they're tracked

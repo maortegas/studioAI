@@ -10,7 +10,9 @@ export type CodingSessionStatus =
   | 'paused'
   | 'reviewing'
   | 'tdd_green'    // GREEN phase: Implementing code to pass tests (batch)
-  | 'tdd_refactor'; // REFACTOR phase: Strategic refactoring at key points
+  | 'tdd_refactor' // REFACTOR phase: Strategic refactoring at key points
+  | 'tdd_ready'    // Context files created, ready for implementation
+  | 'tdd_implementing'; // All-at-once implementation in progress
 
 export type TestStrategy = 'tdd' | 'after' | 'none'; // TDD: tests before coding, after: unit tests after coding, none: no testing
 

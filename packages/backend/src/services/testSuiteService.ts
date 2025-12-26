@@ -89,16 +89,55 @@ export class TestSuiteService {
       // Get story/task title for file naming
       const { Pool } = await import('pg');
       const pool = (await import('../config/database')).default;
-      const storyResult = await pool.query('SELECT title FROM tasks WHERE id = $1', [suite.story_id]);
+      const storyResult = await pool.query('SELECT title, description FROM tasks WHERE id = $1', [suite.story_id]);
       
       let storyTitle = 'default';
+      let storyDescription = '';
       if (storyResult.rows.length > 0) {
         storyTitle = storyResult.rows[0].title;
+        storyDescription = storyResult.rows[0].description || '';
       }
       
-      // Sanitize title for filename
-      const sanitizedTitle = storyTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      const fileName = `${sanitizedTitle}.test.js`;
+      // Try to extract the main file/module name from the story title
+      // Common patterns: "Implement X", "Create X service", "Set up X", "Build X component"
+      // Goal: Extract the core entity name (e.g., "whatsappService", "userController")
+      let fileName = '';
+      
+      // Pattern 1: "Implement/Create/Build X service/controller/component/module"
+      const serviceMatch = storyTitle.match(/(?:implement|create|build|set up|setup)\s+(?:a\s+)?(?:the\s+)?(\w+)(?:\s+service|\s+controller|\s+component|\s+module|\s+class|\s+API|\s+sdk)/i);
+      if (serviceMatch) {
+        fileName = `${serviceMatch[1]}.test.js`;
+      }
+      
+      // Pattern 2: "X Service implementation", "X Controller"
+      const entityMatch = storyTitle.match(/^(\w+)(?:\s+service|\s+controller|\s+component|\s+module)/i);
+      if (!fileName && entityMatch) {
+        fileName = `${entityMatch[1]}.test.js`;
+      }
+      
+      // Pattern 3: Check if description mentions specific file names
+      const fileInDescMatch = (storyTitle + ' ' + storyDescription).match(/(?:file|module|class)\s+(?:named|called)?\s*[`'"']?(\w+\.\w+)[`'"']?/i);
+      if (!fileName && fileInDescMatch) {
+        // Extract filename without extension and use it
+        const baseName = fileInDescMatch[1].replace(/\.\w+$/, '');
+        fileName = `${baseName}.test.js`;
+      }
+      
+      // Pattern 4: Look for CamelCase or PascalCase words that look like class/file names
+      const camelCaseMatch = storyTitle.match(/\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/);
+      if (!fileName && camelCaseMatch) {
+        // Convert PascalCase to camelCase for file naming
+        const camelCase = camelCaseMatch[1].charAt(0).toLowerCase() + camelCaseMatch[1].slice(1);
+        fileName = `${camelCase}.test.js`;
+      }
+      
+      // Fallback: Use sanitized title (current behavior)
+      if (!fileName) {
+        const sanitizedTitle = storyTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        fileName = `${sanitizedTitle}.test.js`;
+      }
+      
+      console.log(`[TestSuiteService] Generated test filename: ${fileName} from story: "${storyTitle}"`);
       
       // Use traditional TDD structure: tests/unit/
       const unitTestDir = path.join(project.base_path, 'tests', 'unit');

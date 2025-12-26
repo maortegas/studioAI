@@ -33,6 +33,14 @@ export class BreakdownService {
       throw new Error('RFC not found');
     }
 
+    // Validate RFC is approved before breakdown (traceability requirement)
+    if (rfc.status !== 'approved') {
+      const errorMessage = `RFC must be approved before generating breakdown. Current status: ${rfc.status}. ` +
+        `Please approve the RFC first by calling PATCH /api/rfc/${request.rfc_id}/status with {"status": "approved"} ` +
+        `or POST /api/rfc/${request.rfc_id}/approve`;
+      throw new Error(errorMessage);
+    }
+
     // Get project
     const project = await this.projectRepo.findById(request.project_id);
     if (!project) {
