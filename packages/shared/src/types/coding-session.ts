@@ -1,8 +1,39 @@
 export type ProgrammerType = 'backend' | 'frontend' | 'fullstack';
 
-export type CodingSessionStatus = 'pending' | 'generating_tests' | 'tests_generated' | 'running' | 'completed' | 'failed' | 'paused';
+export type CodingSessionStatus = 
+  | 'pending' 
+  | 'generating_tests' 
+  | 'tests_generated' 
+  | 'running' 
+  | 'completed' 
+  | 'failed' 
+  | 'paused'
+  | 'reviewing'
+  | 'tdd_green'    // GREEN phase: Implementing code to pass tests (batch)
+  | 'tdd_refactor' // REFACTOR phase: Strategic refactoring at key points
+  | 'tdd_ready'    // Context files created, ready for implementation
+  | 'tdd_implementing'; // All-at-once implementation in progress
 
 export type TestStrategy = 'tdd' | 'after' | 'none'; // TDD: tests before coding, after: unit tests after coding, none: no testing
+
+// TDD Cycle state interface (optimized for batch processing)
+export interface TDDCycle {
+  test_index: number;           // Current test batch starting index (0-based)
+  phase: 'green' | 'refactor';  // Current phase (no RED - tests obviously fail before implementation)
+  batch_size: number;           // Number of tests to implement per batch (default: 3)
+  current_batch_tests: string[];// Test names in current batch
+  tests_passed: number;         // Number of tests passing
+  total_tests: number;          // Total tests to implement
+  all_tests: Array<{            // All tests for this session
+    name: string;
+    code: string;
+    status: 'pending' | 'green' | 'refactored';
+    attempts: number;
+  }>;
+  refactor_count: number;       // Number of strategic refactors done
+  stuck_count: number;          // Number of times stuck in GREEN phase
+  context_bundle?: string;      // Cached prompt bundle (loaded once, reused)
+}
 
 export interface CodingSession {
   id: string;
@@ -20,6 +51,7 @@ export interface CodingSession {
   output?: string;
   tests_output?: string; // Generated tests content
   error?: string;
+  tdd_cycle?: TDDCycle; // TDD cycle state for strict TDD mode
   started_at?: Date;
   completed_at?: Date;
   created_at: Date;

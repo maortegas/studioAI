@@ -114,6 +114,32 @@ export default function BreakdownManager({ projectId }: BreakdownManagerProps) {
       return;
     }
 
+    // Check if RFC is approved
+    const rfc = rfcs.find(r => r.id === selectedRfc);
+    if (rfc && rfc.status !== 'approved') {
+      // Ask user if they want to approve the RFC first
+      const shouldApprove = window.confirm(
+        `The RFC "${rfc.title}" is not approved (current status: ${rfc.status}).\n\n` +
+        `RFCs must be approved before generating breakdown.\n\n` +
+        `Would you like to approve it now and then generate the breakdown?`
+      );
+      
+      if (shouldApprove) {
+        try {
+          await rfcApi.approve(selectedRfc);
+          showToast('RFC approved successfully', 'success');
+          // Reload RFCs to get updated status
+          await loadData();
+        } catch (error: any) {
+          showToast(error.response?.data?.error || 'Failed to approve RFC', 'error');
+          return;
+        }
+      } else {
+        showToast('Please approve the RFC first before generating breakdown', 'warning');
+        return;
+      }
+    }
+
     setGenerating(true);
     try {
       const result = await breakdownApi.generate({
@@ -123,7 +149,28 @@ export default function BreakdownManager({ projectId }: BreakdownManagerProps) {
       setCurrentJobId(result.job_id);
       showToast('Breakdown generation started. This may take a few minutes...', 'info');
     } catch (error: any) {
-      showToast(error.response?.data?.error || 'Failed to generate breakdown', 'error');
+      const errorMessage = error.response?.data?.error || 'Failed to generate breakdown';
+      showToast(errorMessage, 'error');
+      
+      // If error mentions RFC not approved, offer to approve
+      if (errorMessage.includes('must be approved') || errorMessage.includes('approve')) {
+        const rfc = rfcs.find(r => r.id === selectedRfc);
+        if (rfc && rfc.status !== 'approved') {
+          const shouldApprove = window.confirm(
+            `The RFC is not approved. Would you like to approve it now?`
+          );
+          if (shouldApprove) {
+            try {
+              await rfcApi.approve(selectedRfc);
+              showToast('RFC approved. You can now generate the breakdown.', 'success');
+              await loadData();
+            } catch (approveError: any) {
+              showToast(approveError.response?.data?.error || 'Failed to approve RFC', 'error');
+            }
+          }
+        }
+      }
+      
       setGenerating(false);
       setCurrentJobId(null);
     }
@@ -159,18 +206,45 @@ export default function BreakdownManager({ projectId }: BreakdownManagerProps) {
               >
                 {rfcs.map((rfc) => (
                   <option key={rfc.id} value={rfc.id}>
-                    {rfc.title}
+                    {rfc.title} {rfc.status !== 'approved' ? `(${rfc.status})` : ''}
                   </option>
                 ))}
               </select>
             )}
-            <button
-              onClick={handleGenerate}
-              disabled={generating || !selectedRfc}
-              className="px-4 py-2 text-sm bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
-            >
-              {generating ? 'Generating...' : 'Generate Breakdown'}
-            </button>
+            {selectedRfc && (() => {
+              const selectedRfcDoc = rfcs.find(r => r.id === selectedRfc);
+              const isApproved = selectedRfcDoc?.status === 'approved';
+              
+              return (
+                <>
+                  {!isApproved && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await rfcApi.approve(selectedRfc);
+                          showToast('RFC approved successfully', 'success');
+                          await loadData();
+                        } catch (error: any) {
+                          showToast(error.response?.data?.error || 'Failed to approve RFC', 'error');
+                        }
+                      }}
+                      className="px-4 py-2 text-sm bg-yellow-600 dark:bg-yellow-500 text-white rounded-lg hover:bg-yellow-700 dark:hover:bg-yellow-600 transition"
+                      title={`RFC status: ${selectedRfcDoc?.status}. Click to approve.`}
+                    >
+                      Approve RFC
+                    </button>
+                  )}
+                  <button
+                    onClick={handleGenerate}
+                    disabled={generating || !selectedRfc || !isApproved}
+                    className="px-4 py-2 text-sm bg-purple-600 dark:bg-purple-500 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 transition disabled:opacity-50"
+                    title={!isApproved ? 'Please approve the RFC first' : 'Generate breakdown from RFC'}
+                  >
+                    {generating ? 'Generating...' : 'Generate Breakdown'}
+                  </button>
+                </>
+              );
+            })()}
           </div>
         </div>
 

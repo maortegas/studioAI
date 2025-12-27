@@ -45,7 +45,7 @@ export class PrototypeRepository {
 
   async delete(id: string): Promise<boolean> {
     const result = await pool.query('DELETE FROM prototypes WHERE id = $1', [id]);
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   private mapRowToPrototype(row: any): Prototype {

@@ -26,4 +26,14 @@ export const rfcApi = {
     const response = await apiClient.get(`/rfc/${rfcId}/database-schemas`);
     return response.data;
   },
+
+  approve: async (rfcId: string): Promise<RFCDocument> => {
+    const response = await apiClient.post(`/rfc/${rfcId}/approve`);
+    return response.data.rfc;
+  },
+
+  updateStatus: async (rfcId: string, status: 'draft' | 'review' | 'approved' | 'rejected'): Promise<RFCDocument> => {
+    const response = await apiClient.patch(`/rfc/${rfcId}/status`, { status });
+    return response.data;
+  },
 };

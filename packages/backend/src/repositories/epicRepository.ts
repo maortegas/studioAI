@@ -107,7 +107,7 @@ export class EpicRepository {
 
   async delete(id: string): Promise<boolean> {
     const result = await pool.query('DELETE FROM epics WHERE id = $1', [id]);
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   private mapRowToEpic(row: any): Epic {

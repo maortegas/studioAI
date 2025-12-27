@@ -12,6 +12,7 @@ export interface UserStory {
   user_role: string; // Extracted from description
   action: string; // Extracted from description
   benefit: string; // Extracted from description
+  related_feature?: string; // Feature ID or Title from PRD for traceability
   acceptance_criteria: AcceptanceCriterion[];
   story_points?: number;
   generated_from_prd: boolean;

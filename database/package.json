@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "scripts": {
     "migrate": "node scripts/migrate.js",
+    "check-migrations": "node scripts/check-migrations.js",
     "init-db": "bash scripts/init-db.sh"
   },
   "dependencies": {
+    "agentdb": "^1.6.1",
     "pg": "^8.11.3"
   },
   "devDependencies": {
     "@types/pg": "^8.10.9"
   }
 }
-

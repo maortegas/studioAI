@@ -71,6 +71,7 @@ export class TestSuiteService {
 
   /**
    * Save test code to file system
+   * For TDD: uses traditional structure (tests/unit/) with one file per functionality
    */
   async saveTestCodeToFile(suiteId: string, testCode: string): Promise<string> {
     const suite = await this.testSuiteRepo.findById(suiteId);
@@ -83,27 +84,95 @@ export class TestSuiteService {
       throw new Error('Project not found');
     }
 
-    // Determine file path based on test type and coding session
-    const testDir = path.join(project.base_path, 'tests');
-    if (suite.coding_session_id) {
-      const sessionDir = path.join(testDir, `session_${suite.coding_session_id}`);
-      await fs.mkdir(sessionDir, { recursive: true });
+    // For TDD (when coding_session_id exists), use traditional structure: tests/unit/
+    if (suite.coding_session_id && suite.story_id) {
+      // Get story/task title for file naming
+      const { Pool } = await import('pg');
+      const pool = (await import('../config/database')).default;
+      const storyResult = await pool.query('SELECT title, description FROM tasks WHERE id = $1', [suite.story_id]);
       
-      const fileName = `${suite.test_type}_${suite.name.replace(/\s+/g, '_')}.test.js`;
-      const filePath = path.join(sessionDir, fileName);
-      await fs.writeFile(filePath, testCode, 'utf8');
+      let storyTitle = 'default';
+      let storyDescription = '';
+      if (storyResult.rows.length > 0) {
+        storyTitle = storyResult.rows[0].title;
+        storyDescription = storyResult.rows[0].description || '';
+      }
+      
+      // Try to extract the main file/module name from the story title
+      // Common patterns: "Implement X", "Create X service", "Set up X", "Build X component"
+      // Goal: Extract the core entity name (e.g., "whatsappService", "userController")
+      let fileName = '';
+      
+      // Pattern 1: "Implement/Create/Build X service/controller/component/module"
+      const serviceMatch = storyTitle.match(/(?:implement|create|build|set up|setup)\s+(?:a\s+)?(?:the\s+)?(\w+)(?:\s+service|\s+controller|\s+component|\s+module|\s+class|\s+API|\s+sdk)/i);
+      if (serviceMatch) {
+        fileName = `${serviceMatch[1]}.test.js`;
+      }
+      
+      // Pattern 2: "X Service implementation", "X Controller"
+      const entityMatch = storyTitle.match(/^(\w+)(?:\s+service|\s+controller|\s+component|\s+module)/i);
+      if (!fileName && entityMatch) {
+        fileName = `${entityMatch[1]}.test.js`;
+      }
+      
+      // Pattern 3: Check if description mentions specific file names
+      const fileInDescMatch = (storyTitle + ' ' + storyDescription).match(/(?:file|module|class)\s+(?:named|called)?\s*[`'"']?(\w+\.\w+)[`'"']?/i);
+      if (!fileName && fileInDescMatch) {
+        // Extract filename without extension and use it
+        const baseName = fileInDescMatch[1].replace(/\.\w+$/, '');
+        fileName = `${baseName}.test.js`;
+      }
+      
+      // Pattern 4: Look for CamelCase or PascalCase words that look like class/file names
+      const camelCaseMatch = storyTitle.match(/\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/);
+      if (!fileName && camelCaseMatch) {
+        // Convert PascalCase to camelCase for file naming
+        const camelCase = camelCaseMatch[1].charAt(0).toLowerCase() + camelCaseMatch[1].slice(1);
+        fileName = `${camelCase}.test.js`;
+      }
+      
+      // Fallback: Use sanitized title (current behavior)
+      if (!fileName) {
+        const sanitizedTitle = storyTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        fileName = `${sanitizedTitle}.test.js`;
+      }
+      
+      console.log(`[TestSuiteService] Generated test filename: ${fileName} from story: "${storyTitle}"`);
+      
+      // Use traditional TDD structure: tests/unit/
+      const unitTestDir = path.join(project.base_path, 'tests', 'unit');
+      await fs.mkdir(unitTestDir, { recursive: true });
+      
+      const filePath = path.join(unitTestDir, fileName);
+      
+      // If file exists, append tests (traditional TDD: iterate on same file)
+      let finalTestCode = testCode;
+      try {
+        const existingContent = await fs.readFile(filePath, 'utf8');
+        finalTestCode = existingContent + '\n\n' + testCode;
+        console.log(`[TestSuiteService] Appending tests to existing file: ${filePath}`);
+      } catch (error: any) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
+        // File doesn't exist, create new one
+        console.log(`[TestSuiteService] Creating new test file: ${filePath}`);
+      }
+      
+      await fs.writeFile(filePath, finalTestCode, 'utf8');
       
       // Update suite with file path
       await this.testSuiteRepo.update(suiteId, {
-        file_path: `tests/session_${suite.coding_session_id}/${fileName}`,
-        test_code: testCode,
+        file_path: `tests/unit/${fileName}`,
+        test_code: finalTestCode,
         status: 'ready',
         generated_at: new Date(),
       });
       
       return filePath;
     } else {
-      // General test file
+      // General test file (non-TDD)
+      const testDir = path.join(project.base_path, 'tests');
       await fs.mkdir(testDir, { recursive: true });
       const fileName = `${suite.test_type}_${suite.name.replace(/\s+/g, '_')}.test.js`;
       const filePath = path.join(testDir, fileName);
