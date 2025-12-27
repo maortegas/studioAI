@@ -726,7 +726,30 @@ async function processJob(jobId: string) {
             );
             
             console.log(`[Worker] Coding session ${codingSessionId} completed (TDD all-at-once)`);
-            
+
+            // Clean up incorrectly placed files (move from root src/ to MVC directories)
+            try {
+              // Get project_id from coding session
+              const sessionResult = await pool.query(
+                'SELECT project_id FROM coding_sessions WHERE id = $1',
+                [codingSessionId]
+              );
+              if (sessionResult.rows.length > 0) {
+                const projectId = sessionResult.rows[0].project_id;
+                const codingSessionServicePath = path.join(__dirname, '../../backend/src/services/codingSessionService');
+                const { CodingSessionService } = await import(codingSessionServicePath);
+                const codingSessionService = new CodingSessionService();
+                const cleanupResult = await codingSessionService.cleanupIncorrectlyPlacedFiles(projectId);
+                console.log(`[Worker] Cleanup result: ${cleanupResult.moved} files moved, ${cleanupResult.deleted} duplicates deleted`);
+                if (cleanupResult.errors.length > 0) {
+                  console.warn(`[Worker] Cleanup errors:`, cleanupResult.errors);
+                }
+              }
+            } catch (cleanupError) {
+              console.error('[Worker] Error during cleanup:', cleanupError);
+              // Don't fail the session if cleanup fails
+            }
+
             // Update breakdown task status to 'done'
             await updateBreakdownTaskStatus(codingSessionId);
             
@@ -919,7 +942,30 @@ async function processJob(jobId: string) {
               [codingSessionId, 'completed', JSON.stringify({ message: 'Implementation completed successfully' })]
             );
             console.log(`[Worker] Coding session ${codingSessionId} completed`);
-            
+
+            // Clean up incorrectly placed files (move from root src/ to MVC directories)
+            try {
+              // Get project_id from coding session
+              const sessionResult = await pool.query(
+                'SELECT project_id FROM coding_sessions WHERE id = $1',
+                [codingSessionId]
+              );
+              if (sessionResult.rows.length > 0) {
+                const projectId = sessionResult.rows[0].project_id;
+                const codingSessionServicePath = path.join(__dirname, '../../backend/src/services/codingSessionService');
+                const { CodingSessionService } = await import(codingSessionServicePath);
+                const codingSessionService = new CodingSessionService();
+                const cleanupResult = await codingSessionService.cleanupIncorrectlyPlacedFiles(projectId);
+                console.log(`[Worker] Cleanup result: ${cleanupResult.moved} files moved, ${cleanupResult.deleted} duplicates deleted`);
+                if (cleanupResult.errors.length > 0) {
+                  console.warn(`[Worker] Cleanup errors:`, cleanupResult.errors);
+                }
+              }
+            } catch (cleanupError) {
+              console.error('[Worker] Error during cleanup:', cleanupError);
+              // Don't fail the session if cleanup fails
+            }
+
             // Update breakdown task status to 'done'
             await updateBreakdownTaskStatus(codingSessionId);
             

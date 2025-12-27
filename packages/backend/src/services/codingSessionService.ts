@@ -9,6 +9,7 @@ import { TDDRulesValidator } from './tdd/TDDRulesValidator';
 import { TDDStateManager } from './tdd/TDDStateManager';
 import { CursorRulesGenerator } from './tdd/CursorRulesGenerator';
 import path from 'path';
+import * as fs from 'fs/promises';
 import { 
   CodingSession, 
   CreateCodingSessionRequest, 
@@ -632,16 +633,37 @@ export class CodingSessionService {
       lines.push(`\n\`\`\`\n\n`);
     }
     
-    lines.push(`**CRITICAL - SCOPE LIMITATION:**\n`);
-    lines.push(`You MUST generate tests ONLY for the CURRENT TASK/STORY above: "${story.title}"\n`);
-    lines.push(`- Do NOT generate tests for other user stories mentioned in the context\n`);
-    lines.push(`- Do NOT generate tests for the entire project\n`);
-    lines.push(`- Focus EXCLUSIVELY on this specific task/story and its acceptance criteria\n`);
-    lines.push(`- The context above (PRD, RFC, other stories) is for REFERENCE ONLY to understand the project context\n`);
-    lines.push(`- Your task is to test ONLY the functionality described in the CURRENT TASK/STORY section\n`);
+    lines.push(`**🚨 CRITICAL - SCOPE LIMITATION - READ THIS CAREFULLY:**\n`);
+    lines.push(`\n`);
+    lines.push(`**YOU MUST GENERATE TESTS ONLY FOR THIS EXACT TASK:**\n`);
+    lines.push(`**Task Title: "${story.title}"**\n`);
+    lines.push(`**Task ID: ${story.id}**\n`);
+    lines.push(`\n`);
+    lines.push(`**FORBIDDEN - DO NOT GENERATE TESTS FOR:**\n`);
+    lines.push(`❌ Other user stories mentioned in the PRD or context\n`);
+    lines.push(`❌ Other breakdown tasks from the Epic\n`);
+    lines.push(`❌ Project setup tasks (database setup, Next.js setup, etc.) unless THIS is that task\n`);
+    lines.push(`❌ Tasks that are dependencies or prerequisites\n`);
+    lines.push(`❌ The entire project or multiple features\n`);
+    lines.push(`❌ Any functionality NOT explicitly described in THIS task's description and acceptance criteria\n`);
+    lines.push(`\n`);
+    lines.push(`**ALLOWED - GENERATE TESTS ONLY FOR:**\n`);
+    lines.push(`✅ The functionality described in THIS task's title: "${story.title}"\n`);
+    lines.push(`✅ The acceptance criteria listed in THIS task ONLY\n`);
+    lines.push(`✅ The specific API endpoints, functions, or components mentioned in THIS task\n`);
+    lines.push(`\n`);
+    lines.push(`**CONTEXT USAGE RULES:**\n`);
+    lines.push(`- The PRD, RFC, and other stories are for REFERENCE ONLY to understand project context\n`);
+    lines.push(`- Use them to understand the tech stack, architecture, and coding standards\n`);
+    lines.push(`- DO NOT use them to generate tests for other features or stories\n`);
+    lines.push(`- If you see other tasks/stories in the context, IGNORE them - they are NOT your responsibility\n`);
     if (rfcExcerpt) {
-      lines.push(`- Tests MUST validate the RFC Contract specifications above (API contracts, database schema, etc.)\n`);
+      lines.push(`- The RFC Contract above applies ONLY if it's directly relevant to THIS specific task\n`);
     }
+    lines.push(`\n`);
+    lines.push(`**VALIDATION CHECK:**\n`);
+    lines.push(`Before generating each test, ask yourself: "Does this test validate functionality from "${story.title}"?"\n`);
+    lines.push(`If the answer is NO, DO NOT generate that test.\n`);
     lines.push(`\n`);
 
     // Add specific task details if it's a breakdown task
@@ -690,29 +712,48 @@ export class CodingSessionService {
     if (project) {
       const structure = this.structureService.getRecommendedStructure(project.tech_stack);
       lines.push(`## Project Structure\n`);
-      lines.push(`This project uses a **monorepo structure** with apps/ and packages/ directories.\n`);
+      lines.push(`This project uses a **MVC structure** with backend/, frontend/, mobile/, and shared/ directories.\n`);
       lines.push(`${structure.description}\n\n`);
-      lines.push(`**IMPORTANT: Save test files in the appropriate directory:**\n`);
-      const testPath = this.structureService.getRecommendedPath('', 'test', project.tech_stack);
-      lines.push(`- Unit tests: Save in \`${testPath}/unit/\` directory\n`);
-      lines.push(`- Integration tests: Save in \`${testPath}/integration/\` directory (if generating integration tests)\n`);
+      lines.push(`**IMPORTANT: Save test files in the appropriate MVC directory:**\n`);
+      lines.push(`- Backend unit tests: Save in \`backend/tests/unit/\` directory\n`);
+      lines.push(`- Backend integration tests: Save in \`backend/tests/integration/\` directory\n`);
+      lines.push(`- Frontend tests: Save in \`frontend/tests/\` directory\n`);
+      lines.push(`- Mobile tests: Save in \`mobile/tests/\` directory\n`);
       lines.push(`- E2E tests: Save in \`tests/e2e/\` directory (if generating e2e tests)\n`);
       lines.push(`- Follow the naming convention: \`*.test.js\` or \`*.spec.js\`\n\n`);
     }
 
     lines.push(`## Instructions\n`);
     lines.push(`You are a QA engineer. Your task is to generate test suites ONLY for the CURRENT TASK/STORY specified above.\n\n`);
-    lines.push(`**CRITICAL - SCOPE RESTRICTION:**\n`);
-    lines.push(`- Generate tests ONLY for: "${story.title}"\n`);
-    lines.push(`- Do NOT generate tests for other user stories in the context\n`);
-    lines.push(`- Do NOT generate tests for the entire project\n`);
-    lines.push(`- Focus EXCLUSIVELY on the acceptance criteria of the CURRENT TASK/STORY\n`);
-    lines.push(`- The PRD, RFC, and other stories are for REFERENCE ONLY to understand project context\n\n`);
-    lines.push(`**Context Usage (Reference Only):**\n`);
-    lines.push(`- Review the RFC (Technical Design) section for architecture and API contracts relevant to THIS task\n`);
-    lines.push(`- Review the Breakdown section to understand THIS task's place in the larger Epic\n`);
-    lines.push(`- Review User Flows & Design for UI/UX context relevant to THIS task\n`);
-    lines.push(`- Ensure tests align with THIS task's acceptance criteria and technical specifications\n\n`);
+    lines.push(`**🚨 CRITICAL - SCOPE RESTRICTION - READ THIS CAREFULLY:**\n`);
+    lines.push(`\n`);
+    lines.push(`**YOUR ONLY RESPONSIBILITY:**\n`);
+    lines.push(`Generate tests for THIS EXACT TASK: "${story.title}"\n`);
+    lines.push(`\n`);
+    lines.push(`**FORBIDDEN ACTIONS:**\n`);
+    lines.push(`❌ Generating tests for other user stories (even if mentioned in PRD/RFC)\n`);
+    lines.push(`❌ Generating tests for other breakdown tasks\n`);
+    lines.push(`❌ Generating tests for project setup or infrastructure tasks\n`);
+    lines.push(`❌ Generating tests for dependencies or prerequisites\n`);
+    lines.push(`❌ Generating tests for the entire project or multiple features\n`);
+    lines.push(`❌ Generating tests based on other stories' acceptance criteria\n`);
+    lines.push(`\n`);
+    lines.push(`**REQUIRED ACTIONS:**\n`);
+    lines.push(`✅ Generate tests ONLY for: "${story.title}"\n`);
+    lines.push(`✅ Focus EXCLUSIVELY on THIS task's acceptance criteria (listed above)\n`);
+    lines.push(`✅ Generate tests ONLY for functionality explicitly described in THIS task\n`);
+    lines.push(`\n`);
+    lines.push(`**Context Usage Rules (Reference Only):**\n`);
+    lines.push(`- RFC (Technical Design): Use ONLY for API contracts/database schema relevant to THIS task\n`);
+    lines.push(`- Breakdown section: Use ONLY to understand THIS task's dependencies (DO NOT test other tasks)\n`);
+    lines.push(`- User Flows & Design: Use ONLY for UI/UX context relevant to THIS task\n`);
+    lines.push(`- PRD and other stories: Use ONLY to understand project context (DO NOT generate tests for them)\n`);
+    lines.push(`\n`);
+    lines.push(`**VALIDATION CHECK BEFORE EACH TEST:**\n`);
+    lines.push(`Ask: "Is this test validating functionality from '${story.title}'?"\n`);
+    lines.push(`If NO → DO NOT generate that test\n`);
+    lines.push(`If YES → Generate the test\n`);
+    lines.push(`\n`);
     
     if (unitTestsOnly) {
       lines.push(`**IMPORTANT: Generate ONLY unit tests. Do NOT generate integration tests, E2E tests, or load tests.**\n\n`);
@@ -949,40 +990,106 @@ export class CodingSessionService {
     if (project) {
       const structure = this.structureService.getRecommendedStructure(project.tech_stack);
       lines.push(`## Project Structure\n`);
-      lines.push(`This project uses a **monorepo structure** with the following organization:\n`);
-      lines.push(`- \`apps/\` - Deployable applications (shop-web, customer-app, admin-dashboard, api-gateway)\n`);
-      lines.push(`- \`packages/\` - Shared libraries (ui-components, auth-logic, utils, database)\n`);
+      lines.push(`This project uses a **MVC (Model-View-Controller) structure** with the following organization:\n`);
+      lines.push(`- \`backend/\` - Backend API with MVC pattern (controllers, models, services, routes, middleware)\n`);
+      lines.push(`- \`frontend/\` - Frontend web application (React, Next.js, Vue, etc.)\n`);
+      lines.push(`- \`mobile/\` - Mobile application (React Native, Flutter, etc.)\n`);
+      lines.push(`- \`shared/\` - Shared code between frontend/mobile/backend (types, utils, constants)\n`);
+      lines.push(`- \`database/\` - Database migrations and scripts\n`);
+      lines.push(`- \`docs/\` - Project documentation\n`);
       lines.push(`- \`tools/\` - Automation scripts and generators\n`);
-      lines.push(`- \`infra/\` - Infrastructure configuration (Terraform, Docker, Kubernetes)\n`);
-      lines.push(`- \`docs/\` - Project documentation\n\n`);
+      lines.push(`- \`infra/\` - Infrastructure configuration (Terraform, Docker, Kubernetes)\n\n`);
       lines.push(`${structure.description}\n\n`);
-      lines.push(`**IMPORTANT: Save files in the appropriate directories within the monorepo:**\n`);
+      lines.push(`**CRITICAL: Save files in the correct MVC directories. DO NOT create files in root \`src/\` directory:**\n`);
 
       if (programmerType === 'backend' || programmerType === 'fullstack') {
         const backendPath = this.structureService.getRecommendedPath('', 'backend', project.tech_stack);
-        lines.push(`- Backend code: Save in \`${backendPath}\` directory (typically \`apps/api-gateway/src/\`)\n`);
-        lines.push(`  - Controllers/Routes: Place API endpoints in controllers/routes subdirectories\n`);
-        lines.push(`  - Services: Place business logic in services subdirectories\n`);
-        lines.push(`  - Models: Place data models in models subdirectories\n`);
+        lines.push(`- **Backend code**: Save in \`${backendPath}/\` directory\n`);
+        lines.push(`  - Controllers: Place API endpoints in \`${backendPath}/controllers/\`\n`);
+        lines.push(`  - Models: Place data models in \`${backendPath}/models/\`\n`);
+        lines.push(`  - Services: Place business logic in \`${backendPath}/services/\`\n`);
+        lines.push(`  - Routes: Place route definitions in \`${backendPath}/routes/\`\n`);
+        lines.push(`  - Middleware: Place middleware in \`${backendPath}/middleware/\`\n`);
+        lines.push(`  - Config: Place configuration files in \`${backendPath}/config/\`\n`);
+        lines.push(`  - Tests: Place tests in \`backend/tests/\`\n`);
         const dbPath = this.structureService.getRecommendedPath('', 'database', project.tech_stack);
         lines.push(`  - Database migrations: Save in \`${dbPath}/migrations/\` directory\n`);
-        lines.push(`  - Shared utilities: Place in \`packages/utils/\` if reusable across apps\n`);
-        lines.push(`  - Auth logic: Place in \`packages/auth-logic/\` if shared\n`);
+        lines.push(`  - Shared utilities: Place in \`shared/utils/\` if reusable across frontend/mobile/backend\n`);
       }
 
       if (programmerType === 'frontend' || programmerType === 'fullstack') {
         const frontendPath = this.structureService.getRecommendedPath('', 'frontend', project.tech_stack);
-        lines.push(`- Frontend code: Save in \`${frontendPath}\` directory (typically \`apps/shop-web/src/\` or \`apps/admin-dashboard/src/\`)\n`);
-        lines.push(`  - Components: Place React/Vue components in components subdirectories\n`);
-        lines.push(`  - Pages: Place page components in pages subdirectories\n`);
-        lines.push(`  - Services/Utils: Place API clients and utilities in services/utils subdirectories\n`);
-        lines.push(`  - Shared UI components: Place reusable components in \`packages/ui-components/\`\n`);
+        lines.push(`- **Frontend code**: Save in \`${frontendPath}/\` directory\n`);
+        lines.push(`  - Components: Place React/Vue components in \`${frontendPath}/components/\`\n`);
+        lines.push(`  - Pages: Place page components in \`${frontendPath}/pages/\`\n`);
+        lines.push(`  - Hooks: Place custom hooks in \`${frontendPath}/hooks/\`\n`);
+        lines.push(`  - Services: Place API clients in \`${frontendPath}/services/\`\n`);
+        lines.push(`  - Utils: Place utilities in \`${frontendPath}/utils/\`\n`);
+        lines.push(`  - Styles: Place styles in \`${frontendPath}/styles/\`\n`);
+        lines.push(`  - Public: Place static files in \`frontend/public/\`\n`);
+        lines.push(`  - Tests: Place tests in \`frontend/tests/\`\n`);
+        lines.push(`  - Shared code: Place reusable types/utils in \`shared/\`\n`);
+      }
+
+      if (programmerType === 'fullstack') {
+        const mobilePath = this.structureService.getRecommendedPath('', 'mobile', project.tech_stack);
+        lines.push(`- **Mobile code**: Save in \`${mobilePath}/\` directory\n`);
+        lines.push(`  - Screens: Place screen components in \`${mobilePath}/screens/\`\n`);
+        lines.push(`  - Components: Place reusable components in \`${mobilePath}/components/\`\n`);
+        lines.push(`  - Services: Place API clients in \`${mobilePath}/services/\`\n`);
+        lines.push(`  - Navigation: Place navigation config in \`${mobilePath}/navigation/\`\n`);
+        lines.push(`  - Utils: Place utilities in \`${mobilePath}/utils/\`\n`);
+        lines.push(`  - Tests: Place tests in \`mobile/tests/\`\n`);
+        lines.push(`  - Shared code: Place reusable types/utils in \`shared/\`\n`);
       }
       
-      lines.push(`- Documentation: Save in \`docs/\` directory\n`);
-      
-      lines.push(`- Configuration files: Save in \`config/\` directory\n`);
-      lines.push(`- Documentation: Save in \`docs/\` directory\n\n`);
+      lines.push(`\n**🚨 CRITICAL RULES - READ CAREFULLY:**\n`);
+      lines.push(`\n`);
+      lines.push(`**FORBIDDEN LOCATIONS - DO NOT CREATE FILES HERE:**\n`);
+      lines.push(`❌ Root \`src/\` directory (e.g., \`src/lib/\`, \`src/services/\`, \`src/pages/\`)\n`);
+      lines.push(`❌ Root \`lib/\` directory\n`);
+      lines.push(`❌ Root \`pages/\` directory\n`);
+      lines.push(`❌ Any directory in the project root except: backend/, frontend/, mobile/, shared/, database/, docs/, tools/, infra/\n`);
+      lines.push(`\n`);
+      lines.push(`**REQUIRED LOCATIONS - CREATE FILES HERE:**\n`);
+      lines.push(`✅ Backend files → \`backend/src/\` (controllers, models, services, routes, middleware, lib, config)\n`);
+      lines.push(`✅ Frontend files → \`frontend/src/\` (components, pages, hooks, services, utils)\n`);
+      lines.push(`✅ Mobile files → \`mobile/src/\` (screens, components, navigation, services, utils)\n`);
+      lines.push(`✅ Shared code → \`shared/\` (types, utils, constants)\n`);
+      lines.push(`✅ Database files → \`database/\` (migrations, scripts, seeds)\n`);
+      lines.push(`\n`);
+      lines.push(`**VALIDATION CHECK:**\n`);
+      lines.push(`Before creating ANY file, verify the path:\n`);
+      lines.push(`- If path starts with \`src/\` → WRONG! Use \`backend/src/\`, \`frontend/src/\`, or \`mobile/src/\`\n`);
+      lines.push(`- If path is \`lib/db.ts\` → WRONG! Use \`backend/src/lib/db.ts\`\n`);
+      lines.push(`- If path is \`services/EventService.ts\` → WRONG! Use \`backend/src/services/EventService.ts\`\n`);
+      lines.push(`- If path is \`pages/index.tsx\` → WRONG! Use \`frontend/src/pages/index.tsx\`\n`);
+      lines.push(`\n`);
+      lines.push(`\n`);
+      lines.push(`**🚨 CRITICAL FILE EXTENSION RULES - NO DUPLICATES:**\n`);
+      if (project.tech_stack?.toLowerCase().includes('typescript')) {
+        lines.push(`**THIS IS A TYPESCRIPT PROJECT**\n`);
+        lines.push(`❌ FORBIDDEN: Creating files with .js extension\n`);
+        lines.push(`❌ FORBIDDEN: Creating duplicate files (e.g., schema.js AND schema.ts)\n`);
+        lines.push(`❌ FORBIDDEN: Creating both create-schema.js and create-schema.ts\n`);
+        lines.push(`✅ REQUIRED: Use ONLY .ts extension for ALL source files\n`);
+        lines.push(`✅ REQUIRED: If a .js file exists, DO NOT create a .ts version (or vice versa)\n`);
+        lines.push(`✅ REQUIRED: Check existing files before creating new ones\n`);
+        lines.push(`\n`);
+        lines.push(`**VALIDATION CHECK:**\n`);
+        lines.push(`Before creating ANY file, check if a .js or .ts version already exists.\n`);
+        lines.push(`If create-schema.js exists → DO NOT create create-schema.ts\n`);
+        lines.push(`If schema.ts exists → DO NOT create schema.js\n`);
+        lines.push(`NEVER create both versions of the same file.\n`);
+      } else {
+        lines.push(`**THIS IS A JAVASCRIPT PROJECT**\n`);
+        lines.push(`❌ FORBIDDEN: Creating files with .ts extension\n`);
+        lines.push(`❌ FORBIDDEN: Creating duplicate files (e.g., schema.js AND schema.ts)\n`);
+        lines.push(`✅ REQUIRED: Use ONLY .js extension for ALL source files\n`);
+        lines.push(`✅ REQUIRED: If a .ts file exists, DO NOT create a .js version (or vice versa)\n`);
+        lines.push(`✅ REQUIRED: Check existing files before creating new ones\n`);
+      }
+      lines.push(`\n`);
     }
 
     lines.push(`## Instructions\n`);
@@ -1198,7 +1305,7 @@ export class CodingSessionService {
     await rulesGenerator.createCursorRules(
       project.base_path, 
       generatedTests.length,
-      ['src/services', 'src/models', 'src/utils']
+      ['backend/src/services', 'backend/src/models', 'backend/src/utils']
     );
     console.log(`[TDD] ✅ Created .cursorrules`);
 
@@ -1292,7 +1399,69 @@ Implement code to make ALL ${generatedTests.length} tests pass.
 - Do NOT generate new tests
 - Do NOT modify existing tests
 - Do NOT change architecture approach
-${project?.tech_stack ? `- **TECH STACK: ${project.tech_stack}** - Use ONLY this stack, NO mixing of languages/file extensions\n- **FILE EXTENSIONS**: For TypeScript projects, use .ts only (NOT .js), for JavaScript use .js only` : ''}
+${project?.tech_stack ? `- **TECH STACK: ${project.tech_stack}** - Use ONLY this stack, NO mixing of languages/file extensions` : ''}
+
+## 🚨 CRITICAL FILE LOCATION RULES - READ CAREFULLY
+
+**FORBIDDEN LOCATIONS - DO NOT CREATE FILES HERE:**
+❌ Root \`src/\` directory (e.g., \`src/lib/\`, \`src/services/\`, \`src/pages/\`)
+❌ Root \`lib/\` directory
+❌ Root \`pages/\` directory  
+❌ Root \`services/\` directory
+❌ Any directory in project root except: backend/, frontend/, mobile/, shared/, database/, docs/, tools/, infra/
+
+**REQUIRED LOCATIONS - CREATE FILES HERE:**
+✅ Backend files → \`backend/src/\` (lib, services, controllers, models, routes, middleware, config)
+✅ Frontend files → \`frontend/src/\` (components, pages, hooks, services, utils)
+✅ Mobile files → \`mobile/src/\` (screens, components, navigation, services, utils)
+✅ Shared code → \`shared/\` (types, utils, constants)
+✅ Database files → \`database/\` (migrations, scripts, seeds)
+
+**VALIDATION CHECK BEFORE CREATING ANY FILE:**
+1. Does the path start with \`src/\`? → WRONG! Use \`backend/src/\`, \`frontend/src/\`, or \`mobile/src/\`
+2. Is the path \`lib/db.ts\`? → WRONG! Use \`backend/src/lib/db.ts\`
+3. Is the path \`services/EventService.ts\`? → WRONG! Use \`backend/src/services/EventService.ts\`
+4. Is the path \`pages/index.tsx\`? → WRONG! Use \`frontend/src/pages/index.tsx\`
+
+## 🚨 CRITICAL FILE EXTENSION RULES - READ CAREFULLY
+
+${project?.tech_stack?.toLowerCase().includes('typescript') ? `
+**THIS IS A TYPESCRIPT PROJECT**
+
+**FORBIDDEN:**
+❌ DO NOT create files with .js extension
+❌ DO NOT create duplicate files (e.g., schema.js AND schema.ts)
+❌ DO NOT mix .js and .ts files for the same functionality
+❌ DO NOT create both create-schema.js and create-schema.ts
+
+**REQUIRED:**
+✅ Use ONLY .ts extension for ALL source files
+✅ If a file already exists with .js, DO NOT create a .ts version - use the existing .js
+✅ If creating a new file, use ONLY .ts extension
+✅ Database scripts: Use .ts if TypeScript, or .js if plain JavaScript (but NOT both)
+
+**VALIDATION:**
+Before creating ANY file, check if a .js or .ts version already exists.
+If a .js version exists, DO NOT create a .ts version (or vice versa).
+` : `
+**THIS IS A JAVASCRIPT PROJECT**
+
+**FORBIDDEN:**
+❌ DO NOT create files with .ts extension
+❌ DO NOT create duplicate files (e.g., schema.js AND schema.ts)
+❌ DO NOT mix .js and .ts files for the same functionality
+
+**REQUIRED:**
+✅ Use ONLY .js extension for ALL source files
+✅ If a file already exists with .ts, DO NOT create a .js version - use the existing .ts
+✅ If creating a new file, use ONLY .js extension
+`}
+
+**ANTI-DUPLICATION RULE:**
+- If you see create-schema.js exists, DO NOT create create-schema.ts
+- If you see schema.ts exists, DO NOT create schema.js
+- NEVER create both versions of the same file
+- Check existing files before creating new ones
 
 ## 📦 AgentDB Context
 
@@ -1302,13 +1471,19 @@ ${previousContext ? `## 🔄 Previous Session Context\n\n${previousContext}\n\n`
 
 ## ✅ Expected Output
 
-1. Implementation files in src/
+1. Implementation files in **backend/src/** (NOT root src/)
+   - Controllers: \`backend/src/controllers/\`
+   - Models: \`backend/src/models/\`
+   - Services: \`backend/src/services/\`
+   - Routes: \`backend/src/routes/\`
+   - Middleware: \`backend/src/middleware/\`
 2. ALL ${generatedTests.length} tests passing
 3. Clean, refactored code
 4. No new tests generated
 5. No modifications to existing tests
 6. Consistency with traceability chain
 ${project?.tech_stack?.toLowerCase().includes('typescript') ? '7. **ALL implementation files must be .ts** (TypeScript), NO .js files' : ''}
+8. **NEVER create files in root \`src/\`** - Use \`backend/src/\`, \`frontend/src/\`, or \`mobile/src/\`
 
 ## 🚨 VALIDATION
 
@@ -1852,5 +2027,215 @@ Start implementation now.
     lines.push(`**REMEMBER:** Refactor means improving WITHOUT changing behavior. All tests must remain GREEN.\n`);
     
     return lines.join('');
+  }
+
+  /**
+   * Clean up incorrectly placed files after AI generation
+   * Moves files from root src/ to appropriate MVC directories
+   */
+  async cleanupIncorrectlyPlacedFiles(projectId: string): Promise<{ moved: number; deleted: number; errors: string[] }> {
+    const project = await this.projectRepo.findById(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    const projectPath = project.base_path;
+    const results = { moved: 0, deleted: 0, errors: [] as string[] };
+
+    try {
+      // Check if root src/ directory exists
+      const rootSrcPath = path.join(projectPath, 'src');
+      let rootSrcExists = false;
+      try {
+        const stats = await fs.stat(rootSrcPath);
+        rootSrcExists = stats.isDirectory();
+      } catch {
+        // src/ doesn't exist, nothing to clean
+        return results;
+      }
+
+      if (!rootSrcExists) {
+        return results;
+      }
+
+      console.log(`[CodingSessionService] Cleaning up incorrectly placed files in ${rootSrcPath}`);
+
+      // Recursively process files in root src/
+      await this.processDirectoryForCleanup(rootSrcPath, projectPath, results);
+
+      // Also check for root lib/, pages/, services/ directories
+      const rootDirsToCheck = ['lib', 'pages', 'services'];
+      for (const dirName of rootDirsToCheck) {
+        const rootDirPath = path.join(projectPath, dirName);
+        try {
+          const stats = await fs.stat(rootDirPath);
+          if (stats.isDirectory()) {
+            console.log(`[CodingSessionService] Found root ${dirName}/ directory, cleaning up...`);
+            await this.processDirectoryForCleanup(rootDirPath, projectPath, results);
+          }
+        } catch {
+          // Directory doesn't exist, skip
+        }
+      }
+
+      // Check for duplicate .js/.ts files in database/ directory
+      await this.cleanupDuplicateExtensions(path.join(projectPath, 'database'), results);
+
+      console.log(`[CodingSessionService] ✅ Cleanup complete: ${results.moved} files moved, ${results.deleted} duplicates deleted`);
+    } catch (error: any) {
+      console.error('[CodingSessionService] Error during cleanup:', error);
+      results.errors.push(error.message);
+    }
+
+    return results;
+  }
+
+  /**
+   * Process a directory recursively and move files to correct MVC locations
+   */
+  private async processDirectoryForCleanup(
+    currentPath: string,
+    projectPath: string,
+    results: { moved: number; deleted: number; errors: string[] }
+  ): Promise<void> {
+    try {
+      const entries = await fs.readdir(currentPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const entryPath = path.join(currentPath, entry.name);
+
+        if (entry.isDirectory()) {
+          // Recursively process subdirectories
+          await this.processDirectoryForCleanup(entryPath, projectPath, results);
+        } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx') || entry.name.endsWith('.js') || entry.name.endsWith('.jsx'))) {
+          // Determine target location based on file type and path
+          const relativePath = path.relative(projectPath, entryPath);
+          const targetPath = this.determineCorrectLocation(relativePath, projectPath);
+
+          if (targetPath && targetPath !== entryPath) {
+            try {
+              // Check if target already exists
+              try {
+                await fs.access(targetPath);
+                // Target exists, check if it's a duplicate
+                const sourceContent = await fs.readFile(entryPath, 'utf8');
+                const targetContent = await fs.readFile(targetPath, 'utf8');
+                
+                if (sourceContent === targetContent) {
+                  // Same content, delete source
+                  await fs.unlink(entryPath);
+                  results.deleted++;
+                  console.log(`[CodingSessionService] Deleted duplicate: ${relativePath} (same as ${path.relative(projectPath, targetPath)})`);
+                } else {
+                  // Different content, keep both but log warning
+                  console.warn(`[CodingSessionService] ⚠️ Both files exist with different content: ${relativePath} and ${path.relative(projectPath, targetPath)}`);
+                  results.errors.push(`Duplicate files with different content: ${relativePath}`);
+                }
+              } catch {
+                // Target doesn't exist, move file
+                await fs.mkdir(path.dirname(targetPath), { recursive: true });
+                await fs.rename(entryPath, targetPath);
+                results.moved++;
+                console.log(`[CodingSessionService] Moved: ${relativePath} → ${path.relative(projectPath, targetPath)}`);
+              }
+            } catch (error: any) {
+              console.error(`[CodingSessionService] Error moving ${relativePath}:`, error.message);
+              results.errors.push(`Error moving ${relativePath}: ${error.message}`);
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error(`[CodingSessionService] Error processing directory ${currentPath}:`, error.message);
+      results.errors.push(`Error processing ${currentPath}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Determine the correct MVC location for a file
+   */
+  private determineCorrectLocation(relativePath: string, projectPath: string): string | null {
+    // Skip if already in correct MVC location
+    if (relativePath.startsWith('backend/') || relativePath.startsWith('frontend/') || 
+        relativePath.startsWith('mobile/') || relativePath.startsWith('shared/') ||
+        relativePath.startsWith('database/') || relativePath.startsWith('docs/') ||
+        relativePath.startsWith('tools/') || relativePath.startsWith('infra/')) {
+      return null; // Already in correct location
+    }
+
+    const fileName = path.basename(relativePath);
+    const dirName = path.dirname(relativePath).split(path.sep)[0]; // First directory component
+
+    // Map common patterns to MVC locations
+    if (dirName === 'src' || dirName === 'lib' || dirName === 'services' || dirName === 'controllers' || 
+        dirName === 'models' || dirName === 'routes' || dirName === 'middleware' || dirName === 'config') {
+      // Backend file
+      const subPath = relativePath.replace(/^(src|lib|services|controllers|models|routes|middleware|config)[\/\\]/, '');
+      return path.join(projectPath, 'backend', 'src', dirName === 'src' ? subPath : path.join(dirName, subPath));
+    } else if (dirName === 'pages' || dirName === 'components' || dirName === 'hooks') {
+      // Frontend file
+      const subPath = relativePath.replace(/^(pages|components|hooks)[\/\\]/, '');
+      return path.join(projectPath, 'frontend', 'src', dirName, subPath);
+    } else if (fileName.includes('Service') || fileName.includes('Controller') || fileName.includes('Model') || 
+               fileName.includes('db.') || fileName.includes('database')) {
+      // Likely backend file
+      return path.join(projectPath, 'backend', 'src', path.basename(relativePath));
+    } else if (fileName.endsWith('.tsx') || fileName.includes('Component') || fileName.includes('Page')) {
+      // Likely frontend file
+      return path.join(projectPath, 'frontend', 'src', path.basename(relativePath));
+    }
+
+    // Default: assume backend
+    return path.join(projectPath, 'backend', 'src', path.basename(relativePath));
+  }
+
+  /**
+   * Clean up duplicate .js/.ts files in a directory
+   */
+  private async cleanupDuplicateExtensions(
+    dirPath: string,
+    results: { moved: number; deleted: number; errors: string[] }
+  ): Promise<void> {
+    try {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      const fileMap = new Map<string, { js?: string; ts?: string }>();
+
+      // Group files by base name
+      for (const entry of entries) {
+        if (entry.isFile()) {
+          const baseName = entry.name.replace(/\.(js|ts)$/, '');
+          const ext = entry.name.endsWith('.ts') ? 'ts' : entry.name.endsWith('.js') ? 'js' : null;
+          
+          if (ext) {
+            if (!fileMap.has(baseName)) {
+              fileMap.set(baseName, {});
+            }
+            const fileInfo = fileMap.get(baseName)!;
+            fileInfo[ext] = path.join(dirPath, entry.name);
+          }
+        }
+      }
+
+      // Delete duplicates (keep .ts if TypeScript project, .js if JavaScript)
+      for (const [baseName, files] of fileMap.entries()) {
+        if (files.js && files.ts) {
+          // Both exist, delete one based on project type
+          // For now, prefer .ts (TypeScript)
+          try {
+            await fs.unlink(files.js);
+            results.deleted++;
+            console.log(`[CodingSessionService] Deleted duplicate: ${path.basename(files.js)} (keeping .ts version)`);
+          } catch (error: any) {
+            console.error(`[CodingSessionService] Error deleting duplicate ${files.js}:`, error.message);
+            results.errors.push(`Error deleting duplicate ${files.js}: ${error.message}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        console.error(`[CodingSessionService] Error cleaning duplicates in ${dirPath}:`, error.message);
+        results.errors.push(`Error cleaning duplicates in ${dirPath}: ${error.message}`);
+      }
+    }
   }
 }
