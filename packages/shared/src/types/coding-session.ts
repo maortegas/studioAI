@@ -68,7 +68,7 @@ export interface CreateCodingSessionRequest {
 
 export interface CodingSessionEvent {
   session_id: string;
-  event_type: 'progress' | 'file_change' | 'output' | 'error' | 'completed' | 'tests_generated' | 'implementation_started';
+  event_type: 'progress' | 'file_change' | 'output' | 'error' | 'completed' | 'tests_generated' | 'implementation_started' | 'test_execution_result' | 'tdd_batch_completed' | 'tdd_cycle_progress' | 'test_execution_summary';
   payload: {
     progress?: number;
     test_progress?: number;
@@ -78,6 +78,36 @@ export interface CodingSessionEvent {
     tests_output?: string;
     error?: string;
     message?: string;
+    // Test execution result payload
+    batch_start?: number;
+    batch_end?: number;
+    total?: number;
+    passed?: number;
+    failed?: number;
+    skipped?: number;
+    duration?: number;
+    success?: boolean;
+    // TDD batch completed payload
+    batch_number?: number;
+    total_tests?: number;
+    tests_passed?: number;
+    tests_completed?: number;
+    test_results?: {
+      passed: number;
+      failed: number;
+      skipped: number;
+      total: number;
+    };
+    // TDD cycle progress payload
+    test_index?: number;
+    phase?: 'green' | 'refactor';
+    refactor_count?: number;
+    progress_percentage?: number;
+    // Test execution summary payload
+    total_suites?: number;
+    passed_suites?: number;
+    failed_suites?: number;
+    skipped_suites?: number;
   };
   timestamp: Date;
 }

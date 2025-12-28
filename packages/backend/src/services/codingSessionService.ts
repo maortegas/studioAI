@@ -1290,6 +1290,7 @@ export class CodingSessionService {
       current_phase: 'green',
       current_batch: 0,
       total_batches: 1,
+      refactor_attempts: 0, // Initialize refactor attempts counter
       history: [{
         timestamp: new Date().toISOString(),
         phase: 'init',
@@ -1298,7 +1299,7 @@ export class CodingSessionService {
         files_modified: []
       }]
     });
-    console.log(`[TDD] ✅ Initialized state in AgentDB`);
+    console.log(`[TDD] ✅ Initialized state in AgentDB with refactor_attempts=0`);
 
     // 6. Create Cursor Rules (filesystem - unchanged, AI needs it)
     const rulesGenerator = new CursorRulesGenerator();
@@ -2080,6 +2081,14 @@ Start implementation now.
 
       // Check for duplicate .js/.ts files in database/ directory
       await this.cleanupDuplicateExtensions(path.join(projectPath, 'database'), results);
+
+      // Clean up Jest configuration conflicts
+      try {
+        await this.structureService.cleanupJestConfigConflict(projectPath);
+      } catch (error: any) {
+        console.warn('[CodingSessionService] ⚠️ Error cleaning up Jest config conflict:', error.message);
+        results.errors.push(`Error cleaning Jest config: ${error.message}`);
+      }
 
       console.log(`[CodingSessionService] ✅ Cleanup complete: ${results.moved} files moved, ${results.deleted} duplicates deleted`);
     } catch (error: any) {
