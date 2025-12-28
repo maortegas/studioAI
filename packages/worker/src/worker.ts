@@ -806,17 +806,33 @@ async function processJob(jobId: string) {
                   'UPDATE coding_sessions SET status = $1, test_progress = $2, progress = $3, tests_output = $4 WHERE id = $5',
                   ['tests_generated', 50, 50, result.output, codingSessionId]
                 );
-                
+
                 await pool.query(
                   'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-                  [codingSessionId, 'tests_generated', JSON.stringify({ 
-                    tests_output: result.output, 
+                  [codingSessionId, 'tests_generated', JSON.stringify({
+                    tests_output: result.output,
                     test_suites: testSuites.map(ts => ts.id),
-                    message: `Generated ${testSuites.length} unit test suites successfully` 
+                    message: `Generated ${testSuites.length} unit test suites successfully`
                   })]
                 );
-                
+
                 console.log(`[Worker] Generated ${testSuites.length} unit test suites for coding session ${codingSessionId}`);
+
+                // Validate generated tests by attempting to execute them
+                console.log(`[Worker] 🧪 Validating generated tests for session ${codingSessionId}...`);
+                try {
+                  await validateGeneratedTests(codingSessionId, session.project_id);
+                } catch (validationError) {
+                  console.warn('[Worker] ⚠️  Test validation failed, but continuing with implementation:', validationError);
+                  // Log validation failure as event but don't block implementation
+                  await pool.query(
+                    'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                    [codingSessionId, 'error', JSON.stringify({
+                      message: 'Test validation failed',
+                      error: validationError instanceof Error ? validationError.message : String(validationError)
+                    })]
+                  );
+                }
                 
                 // Now create implementation job
                 const projectResult = await pool.query('SELECT base_path, name, tech_stack FROM projects WHERE id = $1', [session.project_id]);
@@ -1613,7 +1629,31 @@ async function processJob(jobId: string) {
             // Log batch completion with test statistics
             console.log(`[Worker] ✅ Batch ${batchStart + 1}-${batchEnd} completed successfully:`);
             console.log(`[Worker]   📊 Tests: ${batchTestResults.passed} passed, ${batchTestResults.failed} failed, ${batchTestResults.skipped} skipped (${batchTestResults.total} total)`);
-            
+
+            // Checkpoint validation: Verify test files are still in correct location
+            console.log(`[Worker] 🔍 Running checkpoint validation for batch ${batchStart + 1}-${batchEnd}...`);
+            try {
+              const projectResult = await pool.query(
+                'SELECT id FROM coding_sessions WHERE id = $1',
+                [codingSessionId]
+              );
+              if (projectResult.rows.length > 0) {
+                const sessionData = projectResult.rows[0];
+                await validateGeneratedTests(codingSessionId, job.project_id);
+                console.log(`[Worker] ✅ Checkpoint validation passed`);
+              }
+            } catch (checkpointError) {
+              console.warn('[Worker] ⚠️  Checkpoint validation failed (non-blocking):', checkpointError);
+              // Log as warning event but don't fail the batch
+              await pool.query(
+                'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                [codingSessionId, 'error', JSON.stringify({
+                  message: 'Checkpoint validation warning',
+                  error: checkpointError instanceof Error ? checkpointError.message : String(checkpointError)
+                })]
+              );
+            }
+
             // Emit event for TDD cycle progress
             await pool.query(
               'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
@@ -4459,6 +4499,129 @@ Fix ALL errors and ensure the ENTIRE project compiles and ALL tests pass.`;
 }
 
 // Helper function to parse and save test suites from AI output
+/**
+ * Validate that generated tests are in correct location and syntactically valid
+ */
+async function validateGeneratedTests(
+  codingSessionId: string,
+  projectId: string
+): Promise<void> {
+  try {
+    // Get test suites for this session
+    const suitesResult = await pool.query(
+      'SELECT id, file_path, test_code FROM test_suites WHERE coding_session_id = $1',
+      [codingSessionId]
+    );
+
+    if (suitesResult.rows.length === 0) {
+      throw new Error('No test suites found for validation');
+    }
+
+    // Get project info
+    const projectResult = await pool.query(
+      'SELECT base_path, tech_stack FROM projects WHERE id = $1',
+      [projectId]
+    );
+
+    if (projectResult.rows.length === 0) {
+      throw new Error('Project not found');
+    }
+
+    const project = projectResult.rows[0];
+    const validationErrors: string[] = [];
+
+    for (const suite of suitesResult.rows) {
+      // Validate 1: Check file is in correct MVC location (backend/tests/unit/)
+      if (!suite.file_path.startsWith('backend/tests/unit/')) {
+        validationErrors.push(
+          `Test file in incorrect location: ${suite.file_path} (should be in backend/tests/unit/)`
+        );
+      }
+
+      // Validate 2: Check file exists on disk
+      const fullPath = path.join(project.base_path, suite.file_path);
+      try {
+        await fs.access(fullPath);
+        console.log(`[Worker] ✅ Test file exists: ${suite.file_path}`);
+      } catch {
+        validationErrors.push(`Test file does not exist on disk: ${suite.file_path}`);
+      }
+
+      // Validate 3: Check for basic test syntax
+      if (!suite.test_code.includes('describe') &&
+          !suite.test_code.includes('test(') &&
+          !suite.test_code.includes('it(')) {
+        validationErrors.push(`Test file missing test framework syntax: ${suite.file_path}`);
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      console.error('[Worker] ❌ Test validation failed:');
+      validationErrors.forEach(err => console.error(`  - ${err}`));
+      throw new Error(`Test validation failed: ${validationErrors.join('; ')}`);
+    }
+
+    console.log(`[Worker] ✅ All ${suitesResult.rows.length} test suites validated successfully`);
+  } catch (error) {
+    console.error('[Worker] Error during test validation:', error);
+    throw error;
+  }
+}
+
+/**
+ * Clean up test files that are outside the MVC structure
+ */
+async function cleanupIncorrectTestFiles(
+  basePath: string,
+  correctFileName: string,
+  correctDir: string
+): Promise<void> {
+  try {
+    // Common incorrect locations where tests might be created
+    const incorrectLocations = [
+      path.join(basePath, 'tests', 'unit'),
+      path.join(basePath, 'test', 'unit'),
+      path.join(basePath, 'src', 'tests', 'unit'),
+      path.join(basePath, '__tests__')
+    ];
+
+    for (const incorrectLoc of incorrectLocations) {
+      try {
+        const incorrectPath = path.join(incorrectLoc, correctFileName);
+
+        // Check if file exists in incorrect location
+        await fs.access(incorrectPath);
+
+        // File exists, delete it
+        await fs.unlink(incorrectPath);
+        console.log(`[Worker] 🧹 Cleaned up incorrectly placed test file: ${incorrectPath}`);
+
+        // Also check for alternate extensions (.js vs .ts)
+        const altExtension = correctFileName.endsWith('.ts') ?
+          correctFileName.replace('.test.ts', '.test.js') :
+          correctFileName.replace('.test.js', '.test.ts');
+
+        const altIncorrectPath = path.join(incorrectLoc, altExtension);
+        try {
+          await fs.access(altIncorrectPath);
+          await fs.unlink(altIncorrectPath);
+          console.log(`[Worker] 🧹 Cleaned up alternate extension: ${altIncorrectPath}`);
+        } catch {
+          // Alternate extension doesn't exist, ignore
+        }
+      } catch (error: any) {
+        if (error.code !== 'ENOENT') {
+          console.warn(`[Worker] Warning checking incorrect location ${incorrectLoc}:`, error.message);
+        }
+        // File doesn't exist in incorrect location, continue
+      }
+    }
+  } catch (error) {
+    console.error('[Worker] Error during cleanup of incorrect test files:', error);
+    // Don't throw - cleanup is non-critical
+  }
+}
+
 async function parseAndSaveTestSuites(
   projectId: string,
   codingSessionId: string,
@@ -4484,14 +4647,24 @@ async function parseAndSaveTestSuites(
         storyTitle = storyResult.rows[0].title;
       }
     }
-    
-    // Sanitize title for filename
+
+    // Sanitize title for filename and add unique ID to prevent collisions
     const sanitizedTitle = storyTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    
-    // Use traditional TDD structure: tests/unit/ (not session-specific folders)
-    const testPath = 'tests'; // Standard test directory
-    const unitTestDir = path.join(project.base_path, testPath, 'unit');
+    const shortId = storyId ? storyId.substring(0, 8) : 'default';
+    const uniqueFileName = `${sanitizedTitle}-${shortId}`;
+
+    // Determine file extension based on tech_stack
+    const isTypeScript = project.tech_stack?.toLowerCase().includes('typescript') ||
+                        project.tech_stack?.toLowerCase().includes('ts');
+    const fileExtension = isTypeScript ? '.test.ts' : '.test.js';
+
+    // Use MVC structure: backend/tests/unit/ (aligned with projectStructureService)
+    const testBaseDir = 'backend/tests';
+    const unitTestDir = path.join(project.base_path, testBaseDir, 'unit');
     await fs.mkdir(unitTestDir, { recursive: true });
+
+    // Validate that we're using the correct MVC structure
+    console.log(`[Worker] ✅ Using MVC structure for tests: ${testBaseDir}/unit/`);
     
     // Parse test code from AI output
     // Look for code blocks with test code
@@ -4552,8 +4725,8 @@ async function parseAndSaveTestSuites(
     }
     
     // Create test suite records in database and save files
-    // Use single file per functionality (based on story title)
-    const fileName = `${sanitizedTitle}.test.js`;
+    // Use single file per functionality with unique ID to prevent collisions
+    const fileName = `${uniqueFileName}${fileExtension}`;
     const filePath = path.join(unitTestDir, fileName);
     
     // Combine all test code into one file
@@ -4581,9 +4754,13 @@ async function parseAndSaveTestSuites(
     
     // Save test file
     await fs.writeFile(filePath, finalTestCode, 'utf8');
-    
+
+    // Clean up duplicate or incorrectly placed test files
+    await cleanupIncorrectTestFiles(project.base_path, fileName, unitTestDir);
+
     // Create test suite in database (one suite per file)
-    const [testType] = testSuitesByType.keys().next().value.split('_');
+    const firstKey = testSuitesByType.keys().next().value;
+    const [testType] = firstKey ? firstKey.split('_') : ['unit'];
     const suiteResult = await pool.query(
       `INSERT INTO test_suites (project_id, coding_session_id, story_id, name, description, test_type, status, file_path, test_code, generated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -4592,11 +4769,11 @@ async function parseAndSaveTestSuites(
         projectId,
         codingSessionId,
         storyId,
-        `${sanitizedTitle}_tests`,
+        `${uniqueFileName}_tests`,
         `Generated ${testType} tests for ${storyTitle}`,
         testType as 'unit' | 'integration' | 'e2e',
         'ready',
-        `tests/unit/${fileName}`,
+        `${testBaseDir}/unit/${fileName}`, // Use MVC structure path
         finalTestCode,
         new Date()
       ]
@@ -4711,7 +4888,72 @@ async function executeTestSuitesForSession(codingSessionId: string, includeFaile
         
         const projectPath = project.base_path;
         const startTime = Date.now();
-        
+
+        // VALIDATION CHECKPOINT: Verify test file exists
+        const testFilePath = path.join(projectPath, suite.file_path);
+        try {
+          await fs.access(testFilePath);
+          console.log(`[Worker] ✓ Test file exists: ${suite.file_path}`);
+        } catch (error: any) {
+          const errorMsg = `Test file not found: ${suite.file_path}`;
+          console.error(`[Worker] ✗ ${errorMsg}`);
+
+          await pool.query(
+            `UPDATE test_executions
+             SET status = $1, completed_at = $2, duration = $3, output = $4, error = $5
+             WHERE id = $6`,
+            ['failed', new Date(), Date.now() - startTime, '', errorMsg, executionId]
+          );
+
+          await pool.query(
+            'UPDATE test_suites SET status = $1, error = $2 WHERE id = $3',
+            ['failed', errorMsg, suite.id]
+          );
+
+          continue; // Skip to next test suite
+        }
+
+        // VALIDATION CHECKPOINT: Verify package.json exists
+        const packageJsonPath = path.join(projectPath, 'package.json');
+        let hasJest = false;
+        try {
+          const packageJsonContent = await fs.readFile(packageJsonPath, 'utf8');
+          const packageJson = JSON.parse(packageJsonContent);
+          hasJest = Boolean(packageJson.devDependencies?.jest || packageJson.dependencies?.jest);
+
+          if (!hasJest) {
+            console.warn(`[Worker] ⚠ Jest not found in package.json dependencies`);
+          } else {
+            console.log(`[Worker] ✓ Jest found in package.json`);
+          }
+        } catch (error: any) {
+          console.warn(`[Worker] ⚠ Could not verify package.json: ${error.message}`);
+        }
+
+        // VALIDATION CHECKPOINT: Verify node_modules exists
+        const nodeModulesPath = path.join(projectPath, 'node_modules');
+        try {
+          await fs.access(nodeModulesPath);
+          console.log(`[Worker] ✓ node_modules directory exists`);
+        } catch (error: any) {
+          const errorMsg = 'node_modules not found. Run "npm install" first.';
+          console.error(`[Worker] ✗ ${errorMsg}`);
+
+          await pool.query(
+            `UPDATE test_executions
+             SET status = $1, completed_at = $2, duration = $3, output = $4, error = $5
+             WHERE id = $6`,
+            ['failed', new Date(), Date.now() - startTime, '', errorMsg, executionId]
+          );
+
+          await pool.query(
+            'UPDATE test_suites SET status = $1, error = $2 WHERE id = $3',
+            ['failed', errorMsg, suite.id]
+          );
+
+          continue; // Skip to next test suite
+        }
+
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4712',message:'Starting test execution',data:{suiteId:suite.id,suiteName:suite.name,testFilePath:suite.file_path,codingSessionId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
         // #endregion
@@ -5615,26 +5857,66 @@ async function parseGeneratedTests(output: string): Promise<Array<{name: string;
     }
     
     console.log(`[Worker] Parsed ${tests.length} tests from AI output`);
-    
-    // If no structured tests found, return a single test with all output
-    if (tests.length === 0) {
-      console.warn('[Worker] Could not parse structured tests. Using entire output as single test.');
-      tests.push({
-        name: 'Generated Test Suite',
-        code: output
-      });
+
+    // Validate and filter parsed tests
+    const validTests = tests.filter(test => {
+      // Filter 1: Check for markdown content
+      if (test.code.includes('```') || test.code.includes('##') || test.code.includes('###')) {
+        console.warn(`[Worker] Filtered out markdown content from test: ${test.name}`);
+        return false;
+      }
+
+      // Filter 2: Check for test framework syntax
+      const hasTestFramework = test.code.includes('describe') ||
+                               test.code.includes('it(') ||
+                               test.code.includes('test(') ||
+                               test.code.includes('def test_') ||
+                               test.code.includes('@Test');
+
+      if (!hasTestFramework) {
+        console.warn(`[Worker] Test missing test framework syntax: ${test.name}`);
+        return false;
+      }
+
+      // Filter 3: Check minimum code length (at least 50 chars for a real test)
+      if (test.code.trim().length < 50) {
+        console.warn(`[Worker] Test code too short, likely invalid: ${test.name}`);
+        return false;
+      }
+
+      // Filter 4: Check for AI explanations (lines starting with "This test...")
+      const lines = test.code.split('\n');
+      const explanationLines = lines.filter(line =>
+        line.trim().toLowerCase().startsWith('this test') ||
+        line.trim().toLowerCase().startsWith('this validates') ||
+        line.trim().toLowerCase().startsWith('this checks')
+      );
+
+      if (explanationLines.length > lines.length * 0.3) {
+        console.warn(`[Worker] Test contains too many explanation lines: ${test.name}`);
+        return false;
+      }
+
+      return true;
+    });
+
+    console.log(`[Worker] After validation: ${validTests.length} valid tests out of ${tests.length} parsed`);
+
+    // If no valid tests found after filtering, return empty array
+    // DO NOT use entire output as fallback (it contains markdown and explanations)
+    if (validTests.length === 0) {
+      console.error('[Worker] No valid tests found after validation. AI output may contain only markdown/explanations.');
+      return [];
     }
+
+    return validTests;
     
   } catch (error) {
     console.error('[Worker] Error parsing tests:', error);
-    // Return entire output as fallback
-    tests.push({
-      name: 'Generated Test Suite',
-      code: output
-    });
+    // DO NOT return entire output as fallback - it may contain invalid code
+    // Return empty array to signal parsing failure
+    return [];
   }
-  
-  return tests;
 }
 
 // Helper function to parse roadmap milestones from AI output
