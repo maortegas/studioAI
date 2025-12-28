@@ -792,11 +792,52 @@ export class CodingSessionService {
     }
 
     lines.push(`\n## Output Format\n`);
-    lines.push(`Provide the test code in the following format:\n`);
-    lines.push(`\`\`\`\n`);
-    lines.push(`// Test file path: path/to/test/file.test.js\n`);
-    lines.push(`// Test code here...\n`);
-    lines.push(`\`\`\`\n`);
+    lines.push(`Provide the test code in the following format:\n\n`);
+    lines.push(`**CRITICAL - Test Structure Requirements:**\n`);
+    lines.push(`Each test file MUST include:\n\n`);
+    lines.push(`1. **All necessary imports at the top:**\n`);
+    lines.push(`   - Test framework imports (Jest, Mocha, etc.)\n`);
+    lines.push(`   - Module/function under test\n`);
+    lines.push(`   - Any mocking libraries needed\n\n`);
+
+    if (programmerType === 'backend') {
+      lines.push(`   **Example for backend:**\n`);
+      lines.push(`   \`\`\`javascript\n`);
+      lines.push(`   // Import the function/class to test\n`);
+      lines.push(`   const { functionToTest } = require('../src/services/myService');\n`);
+      lines.push(`   // Or for TypeScript:\n`);
+      lines.push(`   // import { functionToTest } from '../src/services/myService';\n\n`);
+      lines.push(`   // Mock dependencies if needed\n`);
+      lines.push(`   jest.mock('../src/config/database');\n`);
+      lines.push(`   \`\`\`\n\n`);
+    } else if (programmerType === 'frontend') {
+      lines.push(`   **Example for frontend:**\n`);
+      lines.push(`   \`\`\`javascript\n`);
+      lines.push(`   import React from 'react';\n`);
+      lines.push(`   import { render, screen, fireEvent } from '@testing-library/react';\n`);
+      lines.push(`   import MyComponent from '../src/components/MyComponent';\n`);
+      lines.push(`   \`\`\`\n\n`);
+    }
+
+    lines.push(`2. **Test structure with describe/it blocks:**\n`);
+    lines.push(`   \`\`\`javascript\n`);
+    lines.push(`   describe('Feature Name', () => {\n`);
+    lines.push(`     it('should do something specific', () => {\n`);
+    lines.push(`       // Arrange\n`);
+    lines.push(`       const input = 'test';\n`);
+    lines.push(`       \n`);
+    lines.push(`       // Act\n`);
+    lines.push(`       const result = functionToTest(input);\n`);
+    lines.push(`       \n`);
+    lines.push(`       // Assert\n`);
+    lines.push(`       expect(result).toBe('expected value');\n`);
+    lines.push(`     });\n`);
+    lines.push(`   });\n`);
+    lines.push(`   \`\`\`\n\n`);
+
+    lines.push(`3. **Proper assertions using expect():**\n`);
+    lines.push(`   - Use specific matchers: .toBe(), .toEqual(), .toHaveBeenCalled(), etc.\n`);
+    lines.push(`   - Each test must have at least one assertion\n\n`);
     lines.push(`\n## Test Generation Guidelines\n`);
     lines.push(`Generate focused, runnable ${unitTestsOnly ? 'unit ' : ''}test suites that cover all acceptance criteria from the user story.\n`);
     lines.push(`**CRITICAL - TEST LIMITS:**\n`);
@@ -1890,6 +1931,27 @@ Start implementation now.
       lines.push(`\n\`\`\`\n\n`);
     }
     
+    // Add test file location information (CRITICAL for implementation)
+    const sanitizedTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const shortId = story.id ? story.id.substring(0, 8) : 'default';
+    const uniqueFileName = `${sanitizedTitle}-${shortId}`;
+    const isTypeScript = project?.tech_stack?.toLowerCase().includes('typescript') ||
+                        project?.tech_stack?.toLowerCase().includes('ts');
+    const fileExtension = isTypeScript ? '.test.ts' : '.test.js';
+    const testFilePath = `backend/tests/unit/${uniqueFileName}${fileExtension}`;
+
+    lines.push(`## Test File Location\n\n`);
+    lines.push(`**CRITICAL:** The tests are located at: \`${testFilePath}\`\n\n`);
+    lines.push(`**IMPORTANT:**\n`);
+    lines.push(`- DO NOT create new test files\n`);
+    lines.push(`- The tests already exist at the path above\n`);
+    lines.push(`- Implement code in the appropriate MVC directory:\n`);
+    lines.push(`  - Controllers: \`backend/src/controllers/\`\n`);
+    lines.push(`  - Services: \`backend/src/services/\`\n`);
+    lines.push(`  - Models: \`backend/src/models/\`\n`);
+    lines.push(`  - Routes: \`backend/src/routes/\`\n`);
+    lines.push(`  - Utilities: \`backend/src/utils/\`\n\n`);
+
     const batchNum = Math.floor(tddCycle.test_index / tddCycle.batch_size) + 1;
     lines.push(`## Tests to Implement (Batch ${batchNum}/${Math.ceil(tddCycle.total_tests / tddCycle.batch_size)})\n\n`);
     lines.push(`Implement MINIMAL code to make ALL ${batchTests.length} tests pass:\n\n`);
@@ -1969,7 +2031,23 @@ Start implementation now.
       lines.push(`## Tech Stack\n`);
       lines.push(`**Stack:** ${project.tech_stack}\n\n`);
     }
-    
+
+    // Add test file location information
+    const sanitizedTitle = story.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const shortId = story.id ? story.id.substring(0, 8) : 'default';
+    const uniqueFileName = `${sanitizedTitle}-${shortId}`;
+    const isTypeScript = project?.tech_stack?.toLowerCase().includes('typescript') ||
+                        project?.tech_stack?.toLowerCase().includes('ts');
+    const fileExtension = isTypeScript ? '.test.ts' : '.test.js';
+    const testFilePath = `backend/tests/unit/${uniqueFileName}${fileExtension}`;
+
+    lines.push(`## Test File Location\n\n`);
+    lines.push(`**Test File:** \`${testFilePath}\`\n\n`);
+    lines.push(`**IMPORTANT:**\n`);
+    lines.push(`- All ${tddCycle.total_tests} tests in this file must continue passing\n`);
+    lines.push(`- DO NOT modify the test file unless absolutely necessary\n`);
+    lines.push(`- Refactor only the implementation code in \`backend/src/\` directories\n\n`);
+
     lines.push(`## Refactoring Checklist\n\n`);
     lines.push(`Analyze the current code for these improvements:\n\n`);
     lines.push(`### Code Smells to Fix:\n`);
