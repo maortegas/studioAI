@@ -214,6 +214,122 @@ async function emitProjectReviewEvent(projectId: string, event: any) {
 }
 
 /**
+ * Build refactoring prompt with full AgentDB context
+ */
+async function buildRefactoringPromptWithAgentDB(
+  project: any,
+  story: any,
+  tddContext: string,
+  traceabilityChain: string,
+  historyFromAgentDB: any[],
+  testExecutionResults: any[],
+  refactorAttempt: number,
+  maxRefactorAttempts: number
+): Promise<string> {
+  const lines: string[] = [];
+  
+  lines.push(`# Automatic TDD Refactoring (Attempt ${refactorAttempt}/${maxRefactorAttempts})\n`);
+  lines.push(`\n## 📋 Context from AgentDB\n`);
+  lines.push(`\n**Project**: ${project.name}`);
+  lines.push(`**Tech Stack**: ${project.tech_stack}`);
+  lines.push(`**Story**: ${story.title}`);
+  lines.push(`${story.description ? `**Description**: ${story.description}` : ''}\n`);
+  
+  lines.push(`\n### Traceability Chain (from AgentDB)\n`);
+  lines.push(traceabilityChain);
+  lines.push(`\n`);
+  
+  lines.push(`\n### TDD Context (from AgentDB)\n`);
+  lines.push(tddContext);
+  lines.push(`\n`);
+  
+  if (historyFromAgentDB && historyFromAgentDB.length > 0) {
+    lines.push(`\n### Previous Attempts History (from AgentDB)\n`);
+    lines.push(`The following shows what has been tried before:\n\n`);
+    const recentHistory = historyFromAgentDB.slice(-10);
+    for (const h of recentHistory) {
+      lines.push(`- **[${h.phase}]** ${h.action}: ${h.result}${h.error ? ` - Error: ${h.error}` : ''}\n`);
+    }
+    lines.push(`\n`);
+  }
+  
+  lines.push(`\n## ❌ Test Failures (Current Attempt)\n`);
+  lines.push(`\n**Total Failed**: ${testExecutionResults.length}\n`);
+  lines.push(`\n`);
+  
+  for (const test of testExecutionResults) {
+    lines.push(`\n### Test: ${test.name}\n`);
+    lines.push(`**File**: \`${test.file_path}\`\n`);
+    lines.push(`\n**Test Output**:\n`);
+    lines.push(`\`\`\`\n`);
+    lines.push(test.output || 'No output available');
+    lines.push(`\n\`\`\`\n`);
+    
+    if (test.error_message) {
+      lines.push(`\n**Error Message**:\n`);
+      lines.push(`\`\`\`\n`);
+      lines.push(test.error_message);
+      lines.push(`\n\`\`\`\n`);
+    }
+    lines.push(`\n---\n`);
+  }
+  
+  lines.push(`\n## 🎯 Your Task\n`);
+  lines.push(`\nYou are in a **TDD refactoring cycle**. The implementation exists but tests are failing.\n`);
+  lines.push(`\n**Refactoring Attempt**: ${refactorAttempt} of ${maxRefactorAttempts}\n`);
+  lines.push(`\n### What you MUST do:\n`);
+  lines.push(`\n1. **Analyze the test failures** using the context from AgentDB`);
+  lines.push(`2. **Review previous attempts** in the history to avoid repeating mistakes`);
+  lines.push(`3. **Fix ONLY the implementation code** (tests are locked in AgentDB)`);
+  lines.push(`4. **Make minimal, targeted changes** to pass the tests`);
+  lines.push(`5. **Maintain traceability** with PRD → RFC → Story chain from AgentDB\n`);
+  
+  lines.push(`\n### Critical Rules (from AgentDB context):\n`);
+  lines.push(`\n- ⛔ **NEVER modify test files** (tests are the source of truth in TDD)`);
+  lines.push(`- ✅ **ONLY modify implementation code** in backend/src/, frontend/src/, mobile/src/`);
+  lines.push(`- ✅ **Use TypeScript** (.ts files only) - DO NOT create .js files`);
+  lines.push(`- ✅ **Follow MVC structure** - backend/src/services/, backend/src/models/, etc.`);
+  lines.push(`- ✅ **Keep it simple** - Fix root cause, don't patch symptoms`);
+  lines.push(`- ✅ **Read the test output carefully** - It tells you exactly what's wrong\n`);
+  
+  lines.push(`\n### 🚨 CRITICAL FILE LOCATION RULES\n`);
+  lines.push(`\n**FORBIDDEN LOCATIONS - DO NOT CREATE FILES HERE:**`);
+  lines.push(`❌ Root \`src/\` directory (e.g., \`src/lib/\`, \`src/services/\`, \`src/pages/\`)`);
+  lines.push(`❌ Root \`lib/\` directory`);
+  lines.push(`❌ Root \`pages/\` directory`);
+  lines.push(`❌ Root \`services/\` directory\n`);
+  lines.push(`\n**REQUIRED LOCATIONS - CREATE FILES HERE:**`);
+  lines.push(`✅ Backend files → \`backend/src/\` (lib, services, controllers, models, routes, middleware, config)`);
+  lines.push(`✅ Frontend files → \`frontend/src/\` (components, pages, hooks, services, utils)`);
+  lines.push(`✅ Mobile files → \`mobile/src/\` (screens, components, navigation, services, utils)`);
+  lines.push(`✅ Shared code → \`shared/\` (types, utils, constants)`);
+  lines.push(`✅ Database files → \`database/\` (migrations, scripts, seeds)\n`);
+  
+  if (refactorAttempt > 1) {
+    lines.push(`\n### What Changed From Previous Attempt:\n`);
+    lines.push(`\nReview the history above to see what was tried before.`);
+    lines.push(`**Avoid making the same changes that led to failure.**`);
+    lines.push(`Try a different approach this time.\n`);
+  } else {
+    lines.push(`\n### First Refactoring Attempt:\n`);
+    lines.push(`\nThis is the first attempt to fix the failing tests.`);
+    lines.push(`Analyze the test output carefully to understand the root cause.\n`);
+  }
+  
+  lines.push(`\n## 📦 AgentDB Context Available\n`);
+  lines.push(`\nAll context is stored in AgentDB:`);
+  lines.push(`- Original tests and requirements`);
+  lines.push(`- Previous implementation attempts`);
+  lines.push(`- Traceability chain (PRD → RFC → Story → Tests → Code)`);
+  lines.push(`- History of all actions and their results\n`);
+  lines.push(`\nUse this context to make informed refactoring decisions.\n`);
+  
+  lines.push(`\n**Start refactoring now. Focus on making the failing tests pass.**\n`);
+  
+  return lines.join('');
+}
+
+/**
  * Update breakdown task status to 'done' when coding session completes
  */
 async function updateBreakdownTaskStatus(codingSessionId: string) {
@@ -322,7 +438,7 @@ async function processJob(jobId: string) {
     const phase = job.args.phase; // 'test_generation', 'test_generation_after', 'implementation', 'tdd_red', 'tdd_green', 'tdd_refactor', or 'story_generation'
     const isCodingSession = mode === 'agent' && codingSessionId;
     const isTestGeneration = isCodingSession && (phase === 'test_generation' || phase === 'test_generation_after');
-    const isImplementation = isCodingSession && (phase === 'implementation' || phase === 'tdd_all_at_once');
+    const isImplementation = isCodingSession && (phase === 'implementation' || phase === 'tdd_all_at_once' || phase === 'tdd_refactor');
     const isTDDPhase = isCodingSession && (phase === 'tdd_green' || phase === 'tdd_refactor'); // RED phase removed
     
     // Check if this is a story generation job
@@ -414,10 +530,20 @@ async function processJob(jobId: string) {
               [currentTestsOutput + data, newTestProgress, newTestProgress, codingSessionId]
             );
             
-            await pool.query(
-              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-              [codingSessionId, 'output', JSON.stringify({ output: data, test_progress: newTestProgress })]
+            // Verify session exists before inserting event
+            const sessionCheck = await pool.query(
+              'SELECT id FROM coding_sessions WHERE id = $1',
+              [codingSessionId]
             );
+            
+            if (sessionCheck.rows.length > 0) {
+              await pool.query(
+                'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                [codingSessionId, 'output', JSON.stringify({ output: data, test_progress: newTestProgress })]
+              );
+            } else {
+              console.warn(`[Worker] ⚠️ Cannot insert event - session ${codingSessionId} does not exist`);
+            }
           } else if (isImplementation) {
             // Update output and implementation_progress
             const result = await pool.query(
@@ -434,10 +560,20 @@ async function processJob(jobId: string) {
               [currentOutput + data, newImplProgress, totalProgress, codingSessionId]
             );
             
-            await pool.query(
-              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-              [codingSessionId, 'output', JSON.stringify({ output: data, implementation_progress: newImplProgress, progress: totalProgress })]
+            // Verify session exists before inserting event
+            const sessionCheck = await pool.query(
+              'SELECT id FROM coding_sessions WHERE id = $1',
+              [codingSessionId]
             );
+            
+            if (sessionCheck.rows.length > 0) {
+              await pool.query(
+                'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                [codingSessionId, 'output', JSON.stringify({ output: data, implementation_progress: newImplProgress, progress: totalProgress })]
+              );
+            } else {
+              console.warn(`[Worker] ⚠️ Cannot insert event - session ${codingSessionId} does not exist`);
+            }
           }
         } catch (error) {
           console.error('[Worker] Error updating coding session output:', error);
@@ -451,10 +587,20 @@ async function processJob(jobId: string) {
       // Update coding session with error
       if (isCodingSession) {
         try {
-          await pool.query(
-            'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-            [codingSessionId, 'error', JSON.stringify({ error: data })]
+          // Verify session exists before inserting event
+          const sessionCheck = await pool.query(
+            'SELECT id FROM coding_sessions WHERE id = $1',
+            [codingSessionId]
           );
+          
+          if (sessionCheck.rows.length > 0) {
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'error', JSON.stringify({ error: data })]
+            );
+          } else {
+            console.warn(`[Worker] ⚠️ Cannot insert error event - session ${codingSessionId} does not exist`);
+          }
         } catch (error) {
           console.error('[Worker] Error logging coding session error:', error);
         }
@@ -596,11 +742,26 @@ async function processJob(jobId: string) {
               // Update breakdown task status to 'done'
               await updateBreakdownTaskStatus(codingSessionId);
               
-              // Automatically execute test suites
-              try {
-                await executeTestSuitesForSession(codingSessionId);
-              } catch (testError) {
-                console.error('[Worker] Error executing test suites:', testError);
+              // Verify that the session is not in a final state before executing tests
+              const sessionStatusCheck = await pool.query(
+                'SELECT status FROM coding_sessions WHERE id = $1',
+                [codingSessionId]
+              );
+
+              if (sessionStatusCheck.rows.length > 0) {
+                const currentStatus = sessionStatusCheck.rows[0].status;
+                
+                // Only execute tests if the session is not in a final state
+                if (currentStatus !== 'completed' && currentStatus !== 'failed') {
+                  // Automatically execute test suites
+                  try {
+                    await executeTestSuitesForSession(codingSessionId);
+                  } catch (testError) {
+                    console.error('[Worker] Error executing test suites:', testError);
+                  }
+                } else {
+                  console.log(`[Worker] ⏭️ Skipping test execution - session already in final state: ${currentStatus}`);
+                }
               }
             } else {
               // TDD: Test generation BEFORE implementation
@@ -703,9 +864,86 @@ async function processJob(jobId: string) {
         try {
           const testStrategy = job.args?.test_strategy || 'tdd';
           const isTDDAllAtOnce = phase === 'tdd_all_at_once';
+          const isTDDRefactor = phase === 'tdd_refactor';
+          
+          // For TDD refactoring, re-run tests to verify fix
+          if (isTDDRefactor) {
+            console.log(`[Worker] TDD refactoring completed for session ${codingSessionId}. Re-running tests...`);
+            
+            // Re-execute tests to verify the refactoring fixed the issues
+            // Include failed tests so we can re-run them after refactoring
+            try {
+              await executeTestSuitesForSession(codingSessionId, true);
+              
+              // Check test results
+              const testStatusResult = await pool.query(
+                `SELECT 
+                  COUNT(*) as total_suites,
+                  SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed_suites,
+                  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_suites
+                 FROM test_suites 
+                 WHERE coding_session_id = $1`,
+                [codingSessionId]
+              );
+              
+              if (testStatusResult.rows.length > 0) {
+                const testStatus = testStatusResult.rows[0];
+                const allPassed = (testStatus.failed_suites || 0) === 0 && (testStatus.total_suites || 0) > 0;
+                
+                if (allPassed) {
+                  // Success! Tests now pass after refactoring
+                  console.log(`[Worker] ✅ Refactoring successful! All tests now pass.`);
+                  
+                  // Update AgentDB state
+                  const projectResult = await pool.query(
+                    'SELECT base_path FROM projects WHERE id = (SELECT project_id FROM coding_sessions WHERE id = $1)',
+                    [codingSessionId]
+                  );
+                  const projectPath = projectResult.rows[0]?.base_path;
+                  
+                  const { AgentDBStateManager } = await import('../../backend/src/services/agentdb/AgentDBStateManager');
+                  const stateManager = new AgentDBStateManager(projectPath, codingSessionId);
+                  
+                  // Note: updatePhase expects 'green' | 'refactor', using appendHistory instead
+                  await stateManager.appendHistory({
+                    timestamp: new Date().toISOString(),
+                    phase: 'refactor',
+                    action: 'Refactoring completed successfully',
+                    result: 'success',
+                    files_modified: []
+                  });
+                  
+                  await pool.query(
+                    'UPDATE coding_sessions SET status = $1, error = NULL, implementation_progress = $2 WHERE id = $3',
+                    ['completed', 50, codingSessionId]
+                  );
+                  
+                  await pool.query(
+                    'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                    [codingSessionId, 'completed', JSON.stringify({
+                      message: 'TDD cycle completed successfully after refactoring',
+                      refactor_attempts: job.args?.refactor_attempt || 1,
+                      test_summary: {
+                        total: parseInt(testStatus.total_suites || '0'),
+                        passed: parseInt(testStatus.passed_suites || '0'),
+                        failed: parseInt(testStatus.failed_suites || '0')
+                      }
+                    })]
+                  );
+                  
+                  console.log(`[Worker] ✅ Session ${codingSessionId} completed successfully after refactoring`);
+                  return;
+                }
+                // If tests still failing, continue to regular tdd_all_at_once logic below
+                // which will trigger another refactoring cycle if attempts remain
+              }
+            } catch (testError: any) {
+              console.error('[Worker] Error re-running tests after refactoring:', testError);
+            }
+          }
           
           // For TDD all-at-once, handle completion differently
-          if (isTDDAllAtOnce) {
+          if (isTDDAllAtOnce || isTDDRefactor) {
             console.log(`[Worker] TDD all-at-once implementation completed for session ${codingSessionId}`);
             
             // Update session status to completed
@@ -753,68 +991,317 @@ async function processJob(jobId: string) {
             // Update breakdown task status to 'done'
             await updateBreakdownTaskStatus(codingSessionId);
             
-            // Execute test suites to verify all tests pass
-            try {
-              await executeTestSuitesForSession(codingSessionId);
-            } catch (testError) {
-              console.error('[Worker] Error executing test suites after TDD all-at-once:', testError);
-              // Continue even if test execution fails
+            // Verify that the session is not in a final state before executing tests
+            const sessionStatusCheck = await pool.query(
+              'SELECT status FROM coding_sessions WHERE id = $1',
+              [codingSessionId]
+            );
+
+            if (sessionStatusCheck.rows.length === 0) {
+              console.warn(`[Worker] ⚠️ Session ${codingSessionId} not found, skipping test execution`);
+              return;
+            }
+
+            const currentStatus = sessionStatusCheck.rows[0].status;
+            
+            // Only execute tests if the session is not in a final state
+            if (currentStatus === 'completed' || currentStatus === 'failed') {
+              console.log(`[Worker] ⏭️ Skipping test execution - session already in final state: ${currentStatus}`);
+              return;
             }
             
-            // Automatically trigger QA session
+            // Execute test suites to verify all tests pass
+            // Include failed tests in case we're re-running after a previous failure
+            let allTestsPassed = false;
+            let testSummary = { total: 0, passed: 0, failed: 0, skipped: 0 };
+
             try {
-              const codingSession = await pool.query(
-                'SELECT project_id FROM coding_sessions WHERE id = $1',
+              await executeTestSuitesForSession(codingSessionId, true);
+              
+              // Check if all test suites passed
+              const testStatusResult = await pool.query(
+                `SELECT 
+                  COUNT(*) as total_suites,
+                  SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed_suites,
+                  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_suites,
+                  SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_suites
+                 FROM test_suites 
+                 WHERE coding_session_id = $1`,
                 [codingSessionId]
               );
               
-              if (codingSession.rows.length > 0) {
-                const projectId = codingSession.rows[0].project_id;
+              if (testStatusResult.rows.length > 0) {
+                const testStatus = testStatusResult.rows[0];
+                testSummary = {
+                  total: parseInt(testStatus.total_suites || '0'),
+                  passed: parseInt(testStatus.passed_suites || '0'),
+                  failed: parseInt(testStatus.failed_suites || '0'),
+                  skipped: parseInt(testStatus.skipped_suites || '0')
+                };
                 
-                // Create QA session
-                const qaSession = await pool.query(
-                  'INSERT INTO qa_sessions (project_id, coding_session_id, status) VALUES ($1, $2, $3) RETURNING *',
-                  [projectId, codingSessionId, 'pending']
-                );
+                allTestsPassed = testSummary.failed === 0 && testSummary.total > 0;
                 
-                const qaSessionId = qaSession.rows[0].id;
-                console.log(`[Worker] Created QA session ${qaSessionId} for coding session ${codingSessionId}`);
-                
-                // Create AI job for QA
-                const projectPathResult = await pool.query('SELECT base_path FROM projects WHERE id = $1', [projectId]);
-                const projectPath = projectPathResult.rows[0]?.base_path;
-                const qaPrompt = await buildQAPrompt(projectId, codingSessionId);
-                const qaJob = await pool.query(
-                  `INSERT INTO ai_jobs (project_id, provider, command, args, status)
-                   VALUES ($1, $2, $3, $4, $5)
-                   RETURNING *`,
-                  [
-                    projectId,
-                    'cursor',
-                    'cursor',
-                    JSON.stringify({
-                      mode: 'agent',
-                      prompt: qaPrompt,
-                      project_path: projectPath,
-                      qa_session_id: qaSessionId,
-                    }),
-                    'pending'
-                  ]
-                );
-                
-                // Update QA session to running
+                if (!allTestsPassed) {
+                  console.warn(`[Worker] ⚠️ Tests failed after TDD all-at-once. Failed: ${testSummary.failed}, Total: ${testSummary.total}`);
+                  console.warn(`[Worker] ⚠️ Following TDD principles: Starting automatic refactoring with AgentDB context.`);
+                  
+                  // Get project path for AgentDB
+                  const projectResult = await pool.query(
+                    'SELECT base_path FROM projects WHERE id = (SELECT project_id FROM coding_sessions WHERE id = $1)',
+                    [codingSessionId]
+                  );
+                  const projectPath = projectResult.rows[0]?.base_path;
+                  
+                  // Import AgentDB managers
+                  const { AgentDBContextManager } = await import('../../backend/src/services/agentdb/AgentDBContextManager');
+                  const { AgentDBStateManager } = await import('../../backend/src/services/agentdb/AgentDBStateManager');
+                  const { AgentDBTraceabilityStore } = await import('../../backend/src/services/agentdb/AgentDBTraceabilityStore');
+                  
+                  const contextManager = new AgentDBContextManager(projectPath, codingSessionId);
+                  const stateManager = new AgentDBStateManager(projectPath, codingSessionId);
+                  const traceabilityStore = new AgentDBTraceabilityStore(projectPath, codingSessionId);
+                  
+                  // Get test execution details
+                  const testExecutionResult = await pool.query(
+                    `SELECT te.output, te.error_message, ts.test_code, ts.file_path, ts.name
+                     FROM test_executions te
+                     JOIN test_suites ts ON ts.id = te.test_suite_id
+                     WHERE te.test_suite_id IN (
+                       SELECT id FROM test_suites WHERE coding_session_id = $1 AND status = 'failed'
+                     )
+                     ORDER BY te.completed_at DESC`,
+                    [codingSessionId]
+                  );
+                  
+                  // Save failure history in AgentDB
+                  for (const testExec of testExecutionResult.rows) {
+                    await stateManager.appendHistory({
+                      timestamp: new Date().toISOString(),
+                      phase: 'refactor',
+                      action: `Test failed: ${testExec.name}`,
+                      result: 'failure',
+                      files_modified: [],
+                      error: testExec.error_message,
+                      test_output: testExec.output
+                    });
+                  }
+                  
+                  // Get current refactor attempts from AgentDB state
+                  const currentState = await stateManager.loadState();
+                  const currentRefactorAttempts = currentState?.refactor_attempts || 0;
+                  const refactorAttempts = currentRefactorAttempts + 1;
+                  const maxRefactorAttempts = 3;
+                  
+                  console.log(`[Worker] 📊 Current refactor attempts from AgentDB: ${currentRefactorAttempts}, new attempt: ${refactorAttempts}/${maxRefactorAttempts}`);
+                  
+                  if (refactorAttempts > maxRefactorAttempts) {
+                    // Maximum attempts reached - Note: updatePhase expects 'green' | 'refactor', using appendHistory instead
+                    await stateManager.appendHistory({
+                      timestamp: new Date().toISOString(),
+                      phase: 'refactor',
+                      action: 'Maximum refactoring attempts reached',
+                      result: 'failure',
+                      files_modified: []
+                    });
+                    await pool.query(
+                      'UPDATE coding_sessions SET status = $1, error = $2, implementation_progress = $3 WHERE id = $4',
+                      [
+                        'failed',
+                        `TDD cycle incomplete: ${testSummary.failed} of ${testSummary.total} test suites failed after ${maxRefactorAttempts} refactoring attempts.`,
+                        50,
+                        codingSessionId
+                      ]
+                    );
+                    
+                    await pool.query(
+                      'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                      [codingSessionId, 'error', JSON.stringify({
+                        message: 'TDD cycle failed: Maximum refactoring attempts reached',
+                        refactor_attempts: refactorAttempts - 1,
+                        failed_suites: testSummary.failed,
+                        total_suites: testSummary.total,
+                        action_required: 'manual_review'
+                      })]
+                    );
+                    
+                    console.log(`[Worker] ❌ Session ${codingSessionId} marked as failed - max refactoring attempts (${maxRefactorAttempts}) reached.`);
+                    return;
+                  }
+                  
+                  // Update AgentDB state with refactoring attempt
+                  await stateManager.updateBatch({
+                    current_phase: 'refactor',
+                    refactor_attempts: refactorAttempts,
+                    last_test_failure: {
+                      failed_count: testSummary.failed,
+                      total_count: testSummary.total,
+                      timestamp: new Date().toISOString(),
+                      test_outputs: testExecutionResult.rows.map((r: any) => ({
+                        name: r.name,
+                        output: r.output,
+                        error: r.error_message,
+                        file_path: r.file_path
+                      }))
+                    }
+                  });
+                  
+                  console.log(`[Worker] 💾 Saved refactor_attempts=${refactorAttempts} to AgentDB state`);
+                  
+                  // Verify the state was saved correctly
+                  const verifyState = await stateManager.loadState();
+                  console.log(`[Worker] ✅ Verified saved state - refactor_attempts: ${verifyState?.refactor_attempts || 'NOT FOUND'}`);
+                  
+                  // Get full context from AgentDB for refactoring prompt
+                  const tddContext = await contextManager.getContext();
+                  const traceabilityChain = await traceabilityStore.getTraceabilityChainAsString();
+                  const fullState = await stateManager.loadState();
+                  const historyFromAgentDB = fullState?.history || [];
+                  
+                  console.log(`[Worker] 📖 Loaded state for prompt - refactor_attempts: ${fullState?.refactor_attempts || 'NOT FOUND'}`);
+                  
+                  // Get session and story details
+                  const sessionResult = await pool.query(
+                    'SELECT project_id, story_id FROM coding_sessions WHERE id = $1',
+                    [codingSessionId]
+                  );
+                  const session = sessionResult.rows[0];
+                  
+                  const storyResult = await pool.query(
+                    'SELECT title, description FROM tasks WHERE id = $1',
+                    [session.story_id]
+                  );
+                  const story = storyResult.rows[0];
+                  
+                  const projectDataResult = await pool.query(
+                    'SELECT name, tech_stack FROM projects WHERE id = $1',
+                    [session.project_id]
+                  );
+                  const project = projectDataResult.rows[0];
+                  
+                  // Build refactoring prompt with full AgentDB context
+                  const refactorPrompt = await buildRefactoringPromptWithAgentDB(
+                    project,
+                    story,
+                    tddContext,
+                    traceabilityChain,
+                    historyFromAgentDB,
+                    testExecutionResult.rows,
+                    refactorAttempts,
+                    maxRefactorAttempts
+                  );
+                  
+                  // Create AI job for refactoring
+                  console.log(`[Worker] 🔄 Creating refactoring job with refactor_attempt=${refactorAttempts}...`);
+                  const refactorJob = await pool.query(
+                    `INSERT INTO ai_jobs (project_id, provider, command, args, status)
+                     VALUES ($1, $2, $3, $4, $5)
+                     RETURNING *`,
+                    [
+                      session.project_id,
+                      'cursor',
+                      'cursor',
+                      JSON.stringify({
+                        mode: 'agent',
+                        prompt: refactorPrompt,
+                        project_path: projectPath,
+                        coding_session_id: codingSessionId,
+                        phase: 'tdd_refactor',
+                        test_strategy: 'tdd',
+                        refactor_attempt: refactorAttempts
+                      }),
+                      'pending'
+                    ]
+                  );
+                  
+                  // Update session status for refactoring
+                  await pool.query(
+                    'UPDATE coding_sessions SET status = $1, implementation_progress = $2 WHERE id = $3',
+                    ['tdd_refactoring', 50, codingSessionId]
+                  );
+                  
+                  // Emit progress event
+                  await pool.query(
+                    'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                    [codingSessionId, 'progress', JSON.stringify({
+                      message: `Starting automatic refactoring with AgentDB context (attempt ${refactorAttempts}/${maxRefactorAttempts})`,
+                      phase: 'tdd_refactor',
+                      refactor_attempt: refactorAttempts,
+                      failed_suites: testSummary.failed,
+                      total_suites: testSummary.total
+                    })]
+                  );
+                  
+                  console.log(`[Worker] ✅ Created refactoring job ${refactorJob.rows[0].id} with full AgentDB context`);
+                  console.log(`[Worker] 📊 Refactoring attempt ${refactorAttempts}/${maxRefactorAttempts}`);
+                  // Note: args is already an object (PostgreSQL JSONB), no need to parse
+                  const jobArgs = typeof refactorJob.rows[0].args === 'string' 
+                    ? JSON.parse(refactorJob.rows[0].args) 
+                    : refactorJob.rows[0].args;
+                  console.log(`[Worker] 📝 Job args include refactor_attempt: ${jobArgs?.refactor_attempt || 'NOT FOUND'}`);
+                  
+                  return; // Exit - refactoring job will continue the cycle
+                } else {
+                  console.log(`[Worker] ✅ All tests passed (${testSummary.passed}/${testSummary.total}). TDD cycle complete.`);
+                  
+                  // Update session to reflect successful completion
+                  await pool.query(
+                    'UPDATE coding_sessions SET status = $1, error = NULL, implementation_progress = $2 WHERE id = $3',
+                    ['completed', 50, codingSessionId]
+                  );
+                  
+                  // Emit event for successful TDD completion
+                  await pool.query(
+                    'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                    [codingSessionId, 'completed', JSON.stringify({
+                      message: 'TDD cycle completed successfully - all tests passing',
+                      phase: 'tdd_all_at_once',
+                      test_summary: testSummary
+                    })]
+                  );
+                }
+              } else {
+                // No test suites found - this is a problem for TDD
+                console.warn(`[Worker] ⚠️ No test suites found for session ${codingSessionId}. TDD requires tests first.`);
                 await pool.query(
-                  'UPDATE qa_sessions SET status = $1, started_at = $2 WHERE id = $3',
-                  ['running', new Date(), qaSessionId]
+                  'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+                  ['failed', 'TDD cycle incomplete: No test suites found. Tests must be generated first (TDD principle).', codingSessionId]
                 );
                 
-                console.log(`[Worker] QA job ${qaJob.rows[0].id} created for session ${qaSessionId}`);
+                await pool.query(
+                  'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                  [codingSessionId, 'error', JSON.stringify({
+                    message: 'TDD cycle incomplete: No tests found',
+                    reason: 'TDD requires tests first, then code',
+                    action_required: 'generate_tests'
+                  })]
+                );
+                return;
               }
-            } catch (qaError) {
-              console.error('[Worker] Error creating QA session:', qaError);
-              // Don't fail the coding session if QA creation fails
+            } catch (testError: any) {
+              console.error('[Worker] Error executing test suites after TDD all-at-once:', testError);
+              // If test execution itself fails, mark session as failed
+              await pool.query(
+                'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+                ['failed', `Test execution error: ${testError.message}. TDD cycle incomplete.`, codingSessionId]
+              );
+              
+              await pool.query(
+                'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                [codingSessionId, 'error', JSON.stringify({
+                  message: 'Test execution failed',
+                  error: testError.message,
+                  action_required: 'retry_tests'
+                })]
+              );
+              return; // Exit early
             }
-            
+
+            // TDD cycle complete - do NOT create QA session
+            // Following TDD principles: tests pass, implementation complete
+            console.log(`[Worker] ✅ TDD all-at-once cycle completed for session ${codingSessionId}`);
+            console.log(`[Worker] 📊 Final test results: ${testSummary.passed} passed, ${testSummary.failed} failed, ${testSummary.skipped} skipped (${testSummary.total} total)`);
+            console.log(`[Worker] ℹ️  No QA session created - TDD cycle is self-contained`);
+
             return; // Exit early, don't process as regular implementation
           }
           
@@ -1066,22 +1553,26 @@ async function processJob(jobId: string) {
             // GREEN Phase (BATCH) completed - All tests in batch should now PASS
             const batchSize = job.args.batch_size || tddCycle.batch_size || 3;
             const batchStart = job.args.batch_start !== undefined ? job.args.batch_start : tddCycle.test_index;
-            console.log(`[Worker] GREEN batch completed: tests ${batchStart + 1}-${Math.min(batchStart + batchSize, tddCycle.total_tests)}/${tddCycle.total_tests}`);
+            const batchEnd = Math.min(batchStart + batchSize, tddCycle.total_tests);
             
-            // Parse output to verify tests passed
-            const testsPassed = result.output.toLowerCase().includes('pass') || 
-                              result.output.toLowerCase().includes('✓') ||
-                              result.output.toLowerCase().includes('success');
+            console.log(`[Worker] GREEN batch completed: tests ${batchStart + 1}-${batchEnd}/${tddCycle.total_tests}`);
+            
+            // Execute tests for this batch
+            console.log(`[Worker] 🧪 Executing tests for batch ${batchStart + 1}-${batchEnd}...`);
+            const batchTestResults = await executeBatchTests(codingSessionId, batchStart, batchSize);
+            
+            // Verify tests passed using actual execution results
+            const testsPassed = batchTestResults.success && batchTestResults.failed === 0;
             
             if (!testsPassed) {
-              console.warn('[Worker] Batch tests did not pass in GREEN phase. May need another attempt.');
+              console.warn(`[Worker] ⚠️ Batch tests did not pass. Results: ${batchTestResults.passed} passed, ${batchTestResults.failed} failed`);
               // Increment stuck count
               tddCycle.stuck_count = (tddCycle.stuck_count || 0) + 1;
               
               if (tddCycle.stuck_count >= 3) {
                 // Too many failed attempts, skip to next batch
-                console.error(`[Worker] Stuck on batch ${batchStart + 1}-${batchStart + batchSize} after 3 attempts. Moving to next batch.`);
-                tddCycle.test_index = Math.min(batchStart + batchSize, tddCycle.total_tests);
+                console.error(`[Worker] ❌ Stuck on batch ${batchStart + 1}-${batchEnd} after 3 attempts. Moving to next batch.`);
+                tddCycle.test_index = batchEnd;
                 await pool.query(
                   `UPDATE coding_sessions SET tdd_cycle = $1::jsonb WHERE id = $2`,
                   [JSON.stringify(tddCycle), codingSessionId]
@@ -1105,7 +1596,6 @@ async function processJob(jobId: string) {
             }
             
             // Mark batch tests as green (with bounds checking)
-            const batchEnd = Math.min(batchStart + batchSize, tddCycle.total_tests, tddCycle.all_tests.length);
             for (let i = batchStart; i < batchEnd; i++) {
               const test = tddCycle.all_tests[i];
               if (test && typeof test === 'object') {
@@ -1118,6 +1608,42 @@ async function processJob(jobId: string) {
             await pool.query(
               `UPDATE coding_sessions SET tdd_cycle = $1::jsonb WHERE id = $2`,
               [JSON.stringify(tddCycle), codingSessionId]
+            );
+            
+            // Log batch completion with test statistics
+            console.log(`[Worker] ✅ Batch ${batchStart + 1}-${batchEnd} completed successfully:`);
+            console.log(`[Worker]   📊 Tests: ${batchTestResults.passed} passed, ${batchTestResults.failed} failed, ${batchTestResults.skipped} skipped (${batchTestResults.total} total)`);
+            
+            // Emit event for TDD cycle progress
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'tdd_cycle_progress', JSON.stringify({
+                test_index: tddCycle.test_index,
+                total_tests: tddCycle.total_tests,
+                tests_passed: tddCycle.tests_passed || 0,
+                phase: tddCycle.phase,
+                refactor_count: tddCycle.refactor_count || 0,
+                progress_percentage: Math.round((tddCycle.test_index / tddCycle.total_tests) * 100)
+              })]
+            );
+            
+            // Emit event for TDD batch completion
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'tdd_batch_completed', JSON.stringify({
+                batch_number: Math.floor(batchStart / batchSize) + 1,
+                batch_start: batchStart + 1,
+                batch_end: batchEnd,
+                total_tests: tddCycle.total_tests,
+                tests_passed: tddCycle.tests_passed || 0,
+                tests_completed: batchEnd,
+                test_results: {
+                  passed: batchTestResults.passed,
+                  failed: batchTestResults.failed,
+                  skipped: batchTestResults.skipped,
+                  total: batchTestResults.total
+                }
+              })]
             );
             
             // Advance to next batch (includes strategic refactor logic)
@@ -1175,6 +1701,19 @@ async function processJob(jobId: string) {
             await pool.query(
               `UPDATE coding_sessions SET tdd_cycle = $1::jsonb WHERE id = $2`,
               [JSON.stringify(tddCycle), codingSessionId]
+            );
+            
+            // Emit event for TDD cycle progress after refactor
+            await pool.query(
+              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+              [codingSessionId, 'tdd_cycle_progress', JSON.stringify({
+                test_index: tddCycle.test_index,
+                total_tests: tddCycle.total_tests,
+                tests_passed: tddCycle.tests_passed || 0,
+                phase: tddCycle.phase,
+                refactor_count: tddCycle.refactor_count || 0,
+                progress_percentage: Math.round((tddCycle.test_index / tddCycle.total_tests) * 100)
+              })]
             );
             
             // Continue to next batch after refactor
@@ -4075,16 +4614,21 @@ async function parseAndSaveTestSuites(
 }
 
 // Helper function to execute all test suites for a coding session
-async function executeTestSuitesForSession(codingSessionId: string): Promise<void> {
+async function executeTestSuitesForSession(codingSessionId: string, includeFailed: boolean = false): Promise<void> {
   try {
     // Get all test suites for this session
+    // During refactoring, we need to re-execute failed tests, so include 'failed' status
+    const statusFilter = includeFailed 
+      ? "status IN ('ready', 'failed')" 
+      : "status = 'ready'";
+    
     const suitesResult = await pool.query(
-      'SELECT id, project_id, test_type, file_path, test_code FROM test_suites WHERE coding_session_id = $1 AND status = $2',
-      [codingSessionId, 'ready']
+      `SELECT id, project_id, test_type, file_path, test_code FROM test_suites WHERE coding_session_id = $1 AND ${statusFilter}`,
+      [codingSessionId]
     );
     
     if (suitesResult.rows.length === 0) {
-      console.log(`[Worker] No test suites found for coding session ${codingSessionId}`);
+      console.log(`[Worker] No test suites found for coding session ${codingSessionId}${includeFailed ? ' (including failed)' : ''}`);
       return;
     }
     
@@ -4149,25 +4693,249 @@ async function executeTestSuitesForSession(codingSessionId: string): Promise<voi
           testArgs = ['test', '--', suite.file_path || ''];
         }
         
-        // Note: Actual test execution would require spawning a process
-        // For now, we'll mark it as a placeholder that needs implementation
-        // In a real scenario, you'd use child_process.spawn to run the tests
+        // Only execute tests for JavaScript/TypeScript projects for now
+        if (!techStack.includes('node') && !techStack.includes('javascript') && !techStack.includes('typescript')) {
+          console.log(`[Worker] Test execution for ${techStack} not yet implemented, marking as skipped`);
+          await pool.query(
+            `UPDATE test_executions 
+             SET status = $1, completed_at = $2, duration = $3, total_tests = $4, passed_tests = $4, skipped_tests = $5, output = $6
+             WHERE id = $7`,
+            ['skipped', new Date(), 0, 0, 0, `Test execution for ${techStack} not yet implemented`, executionId]
+          );
+          await pool.query(
+            'UPDATE test_suites SET status = $1, executed_at = $2 WHERE id = $3',
+            ['skipped', new Date(), suite.id]
+          );
+          continue;
+        }
         
-        console.log(`[Worker] Test execution for suite ${suite.id} would run: ${testCommand} ${testArgs.join(' ')}`);
-        console.log(`[Worker] Note: Actual test execution requires process spawning implementation`);
+        const projectPath = project.base_path;
+        const startTime = Date.now();
         
-        // For now, mark as skipped (actual implementation would run tests and parse results)
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4712',message:'Starting test execution',data:{suiteId:suite.id,suiteName:suite.name,testFilePath:suite.file_path,codingSessionId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+        // #endregion
+        
+        // Execute tests using Jest
+        const { spawn } = require('child_process');
+        const testResult = await new Promise<{
+          success: boolean;
+          output: string;
+          error: string;
+          exitCode: number;
+        }>((resolve) => {
+          console.log(`[Worker] Executing tests for suite ${suite.id}...`);
+          
+          // Use npm test with the specific test file
+          const testFile = suite.file_path || '';
+          const args = testFile ? ['test', '--', testFile] : ['test'];
+          
+          const childProcess = spawn('npm', args, {
+            cwd: projectPath,
+            shell: false,
+            stdio: ['ignore', 'pipe', 'pipe']
+          });
+          
+          let output = '';
+          let errorOutput = '';
+          
+          childProcess.stdout.on('data', (data: Buffer) => {
+            output += data.toString();
+          });
+          
+          childProcess.stderr.on('data', (data: Buffer) => {
+            errorOutput += data.toString();
+          });
+          
+          childProcess.on('close', (code: number | null) => {
+            resolve({
+              success: code === 0,
+              output: output + errorOutput,
+              error: errorOutput,
+              exitCode: code || 0
+            });
+          });
+          
+          childProcess.on('error', (error: Error) => {
+            resolve({
+              success: false,
+              output: errorOutput,
+              error: error.message,
+              exitCode: 1
+            });
+          });
+        });
+        
+        const duration = Date.now() - startTime;
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4765',message:'Test execution completed',data:{suiteId:suite.id,executionId,testResultSuccess:testResult.success,outputLength:testResult.output?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+        // #endregion
+        
+        // Parse Jest output to extract test statistics
+        const stats = parseJestOutput(testResult.output);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4768',message:'Jest stats parsed',data:{stats,suiteId:suite.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+        // #endregion
+        
+        // Update execution with results
         await pool.query(
           `UPDATE test_executions 
-           SET status = $1, completed_at = $2, duration = $3, total_tests = $4, passed_tests = $4, skipped_tests = $5, output = $6
-           WHERE id = $7`,
-          ['skipped', new Date(), 0, 0, 0, 'Test execution not yet implemented - requires process spawning', executionId]
+           SET status = $1, completed_at = $2, duration = $3, total_tests = $4, 
+               passed_tests = $5, failed_tests = $6, skipped_tests = $7, output = $8, error_message = $9
+           WHERE id = $10`,
+          [
+            testResult.success && stats.failed === 0 ? 'passed' : 'failed',
+            new Date(),
+            duration,
+            stats.total,
+            stats.passed,
+            stats.failed,
+            stats.skipped,
+            testResult.output,
+            testResult.error || null,
+            executionId
+          ]
         );
         
+        // Update suite status
         await pool.query(
           'UPDATE test_suites SET status = $1, executed_at = $2 WHERE id = $3',
-          ['skipped', new Date(), suite.id]
+          [testResult.success && stats.failed === 0 ? 'passed' : 'failed', new Date(), suite.id]
         );
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4794',message:'PostgreSQL updated, about to sync AgentDB',data:{suiteId:suite.id,codingSessionId,suiteName:suite.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+        // #endregion
+        
+        console.log(`[Worker] ✅ Test suite ${suite.id} execution completed:`);
+        console.log(`[Worker]   📊 Results: ${stats.passed} passed, ${stats.failed} failed, ${stats.skipped} skipped (${stats.total} total)`);
+        console.log(`[Worker]   ⏱️  Duration: ${duration}ms`);
+        console.log(`[Worker]   ${testResult.success && stats.failed === 0 ? '✅ Status: PASSED' : '❌ Status: FAILED'}`);
+        
+        // Update AgentDB test status to sync with PostgreSQL
+        try {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4802',message:'Starting AgentDB sync',data:{suiteId:suite.id,codingSessionId,testResultSuccess:testResult.success,statsFailed:stats.failed},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+          // #endregion
+          console.log(`[Worker] 🔄 Attempting to sync test status to AgentDB for suite ${suite.id}`);
+          const projectResult = await pool.query(
+            'SELECT base_path FROM projects WHERE id = (SELECT project_id FROM coding_sessions WHERE id = $1)',
+            [codingSessionId]
+          );
+          
+          if (projectResult.rows.length > 0) {
+            const projectPath = projectResult.rows[0].base_path;
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4810',message:'Project path retrieved',data:{projectPath},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+            // #endregion
+            console.log(`[Worker] 📁 Project path: ${projectPath}`);
+            
+            const { AgentDBStateManager } = await import('../../backend/src/services/agentdb/AgentDBStateManager');
+            const stateManager = new AgentDBStateManager(projectPath, codingSessionId);
+            
+            // Get test name from suite - try multiple methods to match
+            const suiteName = suite.name || '';
+            const testCode = suite.test_code || '';
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4817',message:'Test name extraction',data:{suiteName,testCodeLength:testCode.length,testCodePreview:testCode.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+            // #endregion
+            console.log(`[Worker] 🔍 Suite name: "${suiteName}", test code length: ${testCode.length}`);
+            
+            // Extract test name from test code if available
+            // Try multiple patterns: it('name'), test('name'), describe('name')
+            const testNameMatch = testCode.match(/(?:it|test|describe)\(['"]([^'"]+)['"]/);
+            const extractedTestName = testNameMatch ? testNameMatch[1] : null;
+            const testNameToMatch = suiteName || extractedTestName || '';
+            
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4825',message:'Test name to match determined',data:{extractedTestName,testNameToMatch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+            // #endregion
+            console.log(`[Worker] 🔍 Extracted test name: "${extractedTestName}", final name to match: "${testNameToMatch}"`);
+            
+            if (testNameToMatch) {
+              // Get all tests from AgentDB to find the matching test
+              const state = await stateManager.loadState();
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4831',message:'AgentDB state loaded',data:{hasState:!!state,testCount:state?.tests?.length||0,testNames:state?.tests?.map((t:any)=>t.name)||[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+              // #endregion
+              if (state && state.tests && state.tests.length > 0) {
+                console.log(`[Worker] 📋 Found ${state.tests.length} tests in AgentDB state`);
+                console.log(`[Worker] 📋 Test names in AgentDB: ${state.tests.map((t: any) => `"${t.name}"`).join(', ')}`);
+                
+                // Try to find matching test by name (exact or partial match)
+                const testIndex = state.tests.findIndex((t: any) => {
+                  const agentdbTestName = t.name || '';
+                  const exactMatch = agentdbTestName === testNameToMatch;
+                  const includesMatch = agentdbTestName.includes(testNameToMatch) || testNameToMatch.includes(agentdbTestName);
+                  const caseInsensitiveMatch = agentdbTestName.toLowerCase() === testNameToMatch.toLowerCase();
+                  
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4837',message:'Comparing test names',data:{agentdbTestName,testNameToMatch,exactMatch,includesMatch,caseInsensitiveMatch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+                  // #endregion
+                  
+                  if (exactMatch || includesMatch || caseInsensitiveMatch) {
+                    console.log(`[Worker] ✅ Found match: "${agentdbTestName}" matches "${testNameToMatch}"`);
+                    return true;
+                  }
+                  return false;
+                });
+                
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4848',message:'Test index search result',data:{testIndex,testNameToMatch},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+                // #endregion
+                
+                if (testIndex >= 0) {
+                  const agentdbStatus = testResult.success && stats.failed === 0 ? 'passing' : 'failing';
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4851',message:'Before updateTestStatus',data:{testIndex,agentdbStatus,currentStatus:state.tests[testIndex]?.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+                  // #endregion
+                  console.log(`[Worker] 💾 Updating AgentDB test at index ${testIndex} to status: ${agentdbStatus}`);
+                  await stateManager.updateTestStatus(testIndex, agentdbStatus);
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4854',message:'After updateTestStatus',data:{testIndex,agentdbStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+                  // #endregion
+                  console.log(`[Worker] ✅ Updated AgentDB test status: "${state.tests[testIndex].name}" -> ${agentdbStatus}`);
+                  
+                  // Verify the update
+                  const verifyState = await stateManager.loadState();
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4858',message:'Verification after update',data:{testIndex,verifiedStatus:verifyState?.tests?.[testIndex]?.status,expectedStatus:agentdbStatus},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+                  // #endregion
+                  if (verifyState && verifyState.tests[testIndex]) {
+                    console.log(`[Worker] ✅ Verified: test status is now "${verifyState.tests[testIndex].status}"`);
+                  }
+                } else {
+                  console.log(`[Worker] ⚠️ Test "${testNameToMatch}" not found in AgentDB state (${state.tests.length} tests available)`);
+                  console.log(`[Worker] ⚠️ Available test names: ${state.tests.map((t: any, i: number) => `${i}: "${t.name}" (status: ${t.status})`).join(', ')}`);
+                }
+              } else {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4865',message:'No tests in AgentDB state',data:{hasState:!!state,hasTests:!!state?.tests},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+                // #endregion
+                console.log(`[Worker] ⚠️ No tests found in AgentDB state for session ${codingSessionId}`);
+              }
+            } else {
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4869',message:'Could not extract test name',data:{suiteId:suite.id,suiteName,extractedTestName},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+              // #endregion
+              console.log(`[Worker] ⚠️ Could not extract test name from suite ${suite.id} (suiteName: "${suiteName}", extracted: "${extractedTestName}")`);
+            }
+          } else {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4873',message:'Project not found',data:{codingSessionId,projectResultRows:projectResult.rows.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+            // #endregion
+            console.log(`[Worker] ⚠️ Project not found for coding session ${codingSessionId}`);
+          }
+        } catch (agentdbError: any) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'worker.ts:4876',message:'Error updating AgentDB',data:{error:agentdbError.message,stack:agentdbError.stack},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch((e)=>{console.error('[Debug] Log fetch failed:',e.message);});
+          // #endregion
+          console.error(`[Worker] ❌ Error updating AgentDB test status: ${agentdbError.message}`);
+          console.error(`[Worker] Error stack: ${agentdbError.stack}`);
+          // Don't fail the test execution if AgentDB update fails
+        }
         
       } catch (error: any) {
         console.error(`[Worker] Error executing test suite ${suite.id}:`, error);
@@ -4184,7 +4952,80 @@ async function executeTestSuitesForSession(codingSessionId: string): Promise<voi
           'UPDATE test_suites SET status = $1, executed_at = $2 WHERE id = $3',
           ['failed', new Date(), suite.id]
         );
+        
+        // Update AgentDB test status to 'failing' on error
+        try {
+          const projectResult = await pool.query(
+            'SELECT base_path FROM projects WHERE id = (SELECT project_id FROM coding_sessions WHERE id = $1)',
+            [codingSessionId]
+          );
+          
+          if (projectResult.rows.length > 0) {
+            const projectPath = projectResult.rows[0].base_path;
+            
+            const { AgentDBStateManager } = await import('../../backend/src/services/agentdb/AgentDBStateManager');
+            const stateManager = new AgentDBStateManager(projectPath, codingSessionId);
+            
+            const suiteName = suite.name || '';
+            const testCode = suite.test_code || '';
+            const testNameMatch = testCode.match(/test\(['"]([^'"]+)['"]|it\(['"]([^'"]+)['"]|describe\(['"]([^'"]+)['"]/);
+            const extractedTestName = testNameMatch ? (testNameMatch[1] || testNameMatch[2] || testNameMatch[3]) : null;
+            const testNameToMatch = suiteName || extractedTestName || '';
+            
+            if (testNameToMatch) {
+              const state = await stateManager.loadState();
+              if (state && state.tests && state.tests.length > 0) {
+                const testIndex = state.tests.findIndex((t: any) => {
+                  const agentdbTestName = t.name || '';
+                  return agentdbTestName === testNameToMatch || 
+                         agentdbTestName.includes(testNameToMatch) || 
+                         testNameToMatch.includes(agentdbTestName) ||
+                         agentdbTestName.toLowerCase() === testNameToMatch.toLowerCase();
+                });
+                
+                if (testIndex >= 0) {
+                  await stateManager.updateTestStatus(testIndex, 'failing');
+                  console.log(`[Worker] ✅ Updated AgentDB test status: "${state.tests[testIndex].name}" -> failing (error)`);
+                }
+              }
+            }
+          }
+        } catch (agentdbError: any) {
+          console.warn(`[Worker] ⚠️ Could not update AgentDB test status on error: ${agentdbError.message}`);
+        }
       }
+    }
+    
+    // Log summary after all suites are executed
+    const summaryResult = await pool.query(
+      `SELECT 
+        COUNT(*) as total_suites,
+        SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed_suites,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_suites,
+        SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped_suites
+       FROM test_suites 
+       WHERE coding_session_id = $1`,
+      [codingSessionId]
+    );
+    
+    if (summaryResult.rows.length > 0) {
+      const summary = summaryResult.rows[0];
+      console.log(`[Worker] 📊 Test Execution Summary for session ${codingSessionId}:`);
+      console.log(`[Worker]   ✅ Passed suites: ${summary.passed_suites || 0}`);
+      console.log(`[Worker]   ❌ Failed suites: ${summary.failed_suites || 0}`);
+      console.log(`[Worker]   ⏭️  Skipped suites: ${summary.skipped_suites || 0}`);
+      console.log(`[Worker]   📈 Total suites: ${summary.total_suites || 0}`);
+      
+      // Emit event for test execution summary
+      await pool.query(
+        'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+        [codingSessionId, 'test_execution_summary', JSON.stringify({
+          total_suites: summary.total_suites || 0,
+          passed_suites: summary.passed_suites || 0,
+          failed_suites: summary.failed_suites || 0,
+          skipped_suites: summary.skipped_suites || 0
+        })]
+      );
     }
     
     console.log(`[Worker] Completed test execution for coding session ${codingSessionId}`);
@@ -4192,6 +5033,179 @@ async function executeTestSuitesForSession(codingSessionId: string): Promise<voi
     console.error('[Worker] Error executing test suites for session:', error);
     throw error;
   }
+}
+
+/**
+ * Helper function to execute tests for a specific batch in TDD cycle
+ */
+async function executeBatchTests(codingSessionId: string, batchStart: number, batchSize: number): Promise<{
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  success: boolean;
+}> {
+  try {
+    // Get project info
+    const sessionResult = await pool.query(
+      'SELECT project_id FROM coding_sessions WHERE id = $1',
+      [codingSessionId]
+    );
+    
+    if (sessionResult.rows.length === 0) {
+      throw new Error('Coding session not found');
+    }
+    
+    const projectId = sessionResult.rows[0].project_id;
+    const projectResult = await pool.query(
+      'SELECT base_path, tech_stack FROM projects WHERE id = $1',
+      [projectId]
+    );
+    
+    if (projectResult.rows.length === 0) {
+      throw new Error('Project not found');
+    }
+    
+    const project = projectResult.rows[0];
+    const techStack = (project.tech_stack || 'nodejs').toLowerCase();
+    const projectPath = project.base_path;
+    
+    // Only execute tests for JavaScript/TypeScript projects for now
+    if (!techStack.includes('node') && !techStack.includes('javascript') && !techStack.includes('typescript')) {
+      console.log(`[Worker] Test execution for ${techStack} not yet implemented for batch tests`);
+      return { total: 0, passed: 0, failed: 0, skipped: 0, success: true };
+    }
+    
+    // Execute npm test (will run all tests, Jest will handle filtering)
+    const { spawn } = require('child_process');
+    const startTime = Date.now();
+    
+    const testResult = await new Promise<{
+      success: boolean;
+      output: string;
+      error: string;
+      exitCode: number;
+    }>((resolve) => {
+      console.log(`[Worker] Executing batch tests (${batchStart + 1}-${batchStart + batchSize}) for session ${codingSessionId}...`);
+      
+      const childProcess = spawn('npm', ['test'], {
+        cwd: projectPath,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      
+      let output = '';
+      let errorOutput = '';
+      
+      childProcess.stdout.on('data', (data: Buffer) => {
+        output += data.toString();
+      });
+      
+      childProcess.stderr.on('data', (data: Buffer) => {
+        errorOutput += data.toString();
+      });
+      
+      childProcess.on('close', (code: number | null) => {
+        resolve({
+          success: code === 0,
+          output: output + errorOutput,
+          error: errorOutput,
+          exitCode: code || 0
+        });
+      });
+      
+      childProcess.on('error', (error: Error) => {
+        resolve({
+          success: false,
+          output: errorOutput,
+          error: error.message,
+          exitCode: 1
+        });
+      });
+    });
+    
+    const duration = Date.now() - startTime;
+    const stats = parseJestOutput(testResult.output);
+    
+    // Log detailed statistics
+    console.log(`[Worker] 📊 Batch Test Results (tests ${batchStart + 1}-${batchStart + batchSize}):`);
+    console.log(`[Worker]   ✅ Passed: ${stats.passed}`);
+    console.log(`[Worker]   ❌ Failed: ${stats.failed}`);
+    console.log(`[Worker]   ⏭️  Skipped: ${stats.skipped}`);
+    console.log(`[Worker]   📈 Total: ${stats.total}`);
+    console.log(`[Worker]   ⏱️  Duration: ${duration}ms`);
+    console.log(`[Worker]   ${testResult.success && stats.failed === 0 ? '✅ All tests passed!' : '❌ Some tests failed'}`);
+    
+    // Emit event for real-time updates
+    await pool.query(
+      'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+      [codingSessionId, 'test_execution_result', JSON.stringify({
+        batch_start: batchStart,
+        batch_end: batchStart + batchSize,
+        total: stats.total,
+        passed: stats.passed,
+        failed: stats.failed,
+        skipped: stats.skipped,
+        duration: duration,
+        success: testResult.success && stats.failed === 0
+      })]
+    );
+    
+    return {
+      total: stats.total,
+      passed: stats.passed,
+      failed: stats.failed,
+      skipped: stats.skipped,
+      success: testResult.success && stats.failed === 0
+    };
+  } catch (error: any) {
+    console.error(`[Worker] Error executing batch tests:`, error);
+    return { total: 0, passed: 0, failed: 0, skipped: 0, success: false };
+  }
+}
+
+/**
+ * Parse Jest output to extract test statistics
+ */
+function parseJestOutput(output: string): {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+} {
+  const stats = { total: 0, passed: 0, failed: 0, skipped: 0 };
+  
+  // Pattern 1: "Tests: X passed, Y failed, Z total"
+  const summaryMatch = output.match(/Tests:\s*(\d+)\s+passed,\s*(\d+)\s+failed,\s*(\d+)\s+total/i);
+  if (summaryMatch) {
+    stats.passed = parseInt(summaryMatch[1]) || 0;
+    stats.failed = parseInt(summaryMatch[2]) || 0;
+    stats.total = parseInt(summaryMatch[3]) || 0;
+    return stats;
+  }
+  
+  // Pattern 2: "X passed, Y failed"
+  const simpleMatch = output.match(/(\d+)\s+passed[,\s]+(\d+)\s+failed/i);
+  if (simpleMatch) {
+    stats.passed = parseInt(simpleMatch[1]) || 0;
+    stats.failed = parseInt(simpleMatch[2]) || 0;
+    stats.total = stats.passed + stats.failed;
+    return stats;
+  }
+  
+  // Pattern 3: Jest default format "PASS" or "FAIL" with test count
+  const passMatch = output.match(/(\d+)\s+passing/i);
+  const failMatch = output.match(/(\d+)\s+failing/i);
+  
+  if (passMatch) {
+    stats.passed = parseInt(passMatch[1]) || 0;
+  }
+  if (failMatch) {
+    stats.failed = parseInt(failMatch[1]) || 0;
+  }
+  stats.total = stats.passed + stats.failed;
+  
+  return stats;
 }
 
 // Helper function to build implementation prompt with tests
