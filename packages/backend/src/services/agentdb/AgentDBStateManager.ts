@@ -22,6 +22,18 @@ export interface TDDSessionState {
   current_phase: 'green' | 'refactor';
   current_batch: number;
   total_batches: number;
+  refactor_attempts?: number; // Track refactoring attempts
+  last_test_failure?: { // Track last test failure details
+    failed_count: number;
+    total_count: number;
+    timestamp: string;
+    test_outputs?: Array<{
+      name: string;
+      output: string;
+      error?: string;
+      file_path: string;
+    }>;
+  };
   history: Array<{
     timestamp: string;
     phase: string;
@@ -75,6 +87,11 @@ export class AgentDBStateManager {
   async saveState(state: TDDSessionState): Promise<void> {
     try {
       const instance = await this.ensureInstance();
+
+      // Log refactor_attempts if present for debugging
+      if (state.refactor_attempts !== undefined) {
+        console.log(`[AgentDBStateManager] 💾 Saving state with refactor_attempts=${state.refactor_attempts}`);
+      }
 
       // Store state as JSON in tdd_state table
       await this.agentdbService.executeStatement(
@@ -133,9 +150,19 @@ export class AgentDBStateManager {
 
       if (result && result.length > 0) {
         const stateJson = result[0].state_json;
-        return JSON.parse(stateJson) as TDDSessionState;
+        const state = JSON.parse(stateJson) as TDDSessionState;
+        
+        // Log refactor_attempts if present for debugging
+        if (state.refactor_attempts !== undefined) {
+          console.log(`[AgentDBStateManager] 📖 Loaded state with refactor_attempts=${state.refactor_attempts}`);
+        } else {
+          console.log(`[AgentDBStateManager] 📖 Loaded state - refactor_attempts NOT FOUND`);
+        }
+        
+        return state;
       }
 
+      console.log(`[AgentDBStateManager] 📖 No state found for session ${this.sessionId}`);
       return null;
     } catch (error: any) {
       console.error('[AgentDBStateManager] Error loading state:', error);
@@ -258,18 +285,49 @@ export class AgentDBStateManager {
 
   /**
    * Update batch information
+   * Can also update refactor_attempts and last_test_failure if provided
    */
-  async updateBatch(currentBatch: number, totalBatches: number): Promise<void> {
+  async updateBatch(updates: {
+    currentBatch?: number;
+    totalBatches?: number;
+    current_phase?: 'green' | 'refactor';
+    refactor_attempts?: number;
+    last_test_failure?: {
+      failed_count: number;
+      total_count: number;
+      timestamp: string;
+      test_outputs?: Array<{
+        name: string;
+        output: string;
+        error?: string;
+        file_path: string;
+      }>;
+    };
+  }): Promise<void> {
     try {
       const state = await this.loadState();
       if (!state) {
         throw new Error('Cannot update batch: state not initialized');
       }
 
-      state.current_batch = currentBatch;
-      state.total_batches = totalBatches;
+      if (updates.currentBatch !== undefined) {
+        state.current_batch = updates.currentBatch;
+      }
+      if (updates.totalBatches !== undefined) {
+        state.total_batches = updates.totalBatches;
+      }
+      if (updates.current_phase !== undefined) {
+        state.current_phase = updates.current_phase;
+      }
+      if (updates.refactor_attempts !== undefined) {
+        state.refactor_attempts = updates.refactor_attempts;
+      }
+      if (updates.last_test_failure !== undefined) {
+        state.last_test_failure = updates.last_test_failure;
+      }
+
       await this.saveState(state);
-      console.log(`[AgentDBStateManager] Updated batch: ${currentBatch}/${totalBatches}`);
+      console.log(`[AgentDBStateManager] Updated batch: ${updates.currentBatch || state.current_batch}/${updates.totalBatches || state.total_batches}${updates.refactor_attempts !== undefined ? `, refactor_attempts: ${updates.refactor_attempts}` : ''}`);
     } catch (error) {
       console.error('[AgentDBStateManager] Error updating batch:', error);
       throw error;

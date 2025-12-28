@@ -57,20 +57,22 @@ export interface AgentDBInstance {
 }
 
 export class AgentDBService {
-  private instances: Map<string, AgentDBInstance> = new Map();
+  // Static shared cache across all AgentDBService instances
+  private static sharedInstances: Map<string, AgentDBInstance> = new Map();
 
   /**
    * Get or create an AgentDB instance for a project
    * All sessions for the same project share one database file
    * Creates a new database file if it doesn't exist
+   * Uses static shared cache so all AgentDBService instances share the same cache
    */
   async getInstance(projectPath: string, sessionId: string): Promise<AgentDBInstance> {
     // Use project path as cache key - one DB per project, not per session
     const cacheKey = projectPath;
     
-    if (this.instances.has(cacheKey)) {
+    if (AgentDBService.sharedInstances.has(cacheKey)) {
       console.log(`[AgentDBService] Using cached database instance for project`);
-      return this.instances.get(cacheKey)!;
+      return AgentDBService.sharedInstances.get(cacheKey)!;
     }
 
     console.log(`[AgentDBService] Creating new database instance`);
@@ -197,13 +199,13 @@ export class AgentDBService {
         initialize: async () => {}, // Already initialized
         close: () => {
           dbWrapper.close();
-          this.instances.delete(cacheKey);
+          AgentDBService.sharedInstances.delete(cacheKey);
           console.log(`[AgentDBService] Closed database instance for project ${projectName}`);
         }
       };
 
-      this.instances.set(cacheKey, instance);
-      console.log(`[AgentDBService] ✅ Database instance cached and ready (shared by all sessions)`);
+      AgentDBService.sharedInstances.set(cacheKey, instance);
+      console.log(`[AgentDBService] ✅ Database instance cached and ready (shared by all sessions and managers)`);
       return instance;
     } catch (error: any) {
       console.error(`[AgentDBService] ❌ Error creating database:`, error);

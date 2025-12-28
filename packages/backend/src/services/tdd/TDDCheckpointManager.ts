@@ -76,12 +76,14 @@ export class TDDCheckpointManager {
 
   /**
    * Detect source directories in the project
+   * Uses MVC structure: backend/, frontend/, mobile/, shared/, database/
    */
   private async detectSourceDirectories(): Promise<string[]> {
-    const commonDirs = ['src', 'tests', 'test', 'lib', 'app'];
+    // MVC structure directories (do NOT include root src/ or tests/)
+    const mvcDirs = ['backend', 'frontend', 'mobile', 'shared', 'database', 'tests'];
     const detectedDirs: string[] = [];
 
-    for (const dir of commonDirs) {
+    for (const dir of mvcDirs) {
       const dirPath = path.join(this.projectPath, dir);
       try {
         const stats = await fs.stat(dirPath);
@@ -93,9 +95,28 @@ export class TDDCheckpointManager {
       }
     }
 
-    // If no directories found, default to src and tests
+    // If no MVC directories found, check for legacy structure (but warn)
     if (detectedDirs.length === 0) {
-      return ['src', 'tests'];
+      console.warn('[TDD-CheckpointManager] No MVC directories found, checking for legacy structure');
+      const legacyDirs = ['src', 'tests', 'test'];
+      for (const dir of legacyDirs) {
+        const dirPath = path.join(this.projectPath, dir);
+        try {
+          const stats = await fs.stat(dirPath);
+          if (stats.isDirectory()) {
+            detectedDirs.push(dir);
+          }
+        } catch {
+          // Directory doesn't exist, skip
+        }
+      }
+    }
+
+    // Never include root src/ or root tests/ if MVC structure exists
+    // Filter out root src/ and root tests/ if backend/ or frontend/ exist
+    const hasMvcStructure = detectedDirs.some(d => ['backend', 'frontend', 'mobile'].includes(d));
+    if (hasMvcStructure) {
+      return detectedDirs.filter(d => d !== 'src' && d !== 'test');
     }
 
     return detectedDirs;

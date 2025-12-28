@@ -144,7 +144,7 @@ export class AgentDBRulesManager {
             message: 'Tests are LOCKED. Cannot modify.'
           },
           implementation: {
-            allowed_directories: ['src/services', 'src/models', 'src/utils', 'src/controllers', 'src/routes'],
+            allowed_directories: ['backend/src/services', 'backend/src/models', 'backend/src/utils', 'backend/src/controllers', 'backend/src/routes', 'backend/src/lib', 'backend/src/middleware', 'backend/src/config', 'frontend/src/components', 'frontend/src/pages', 'frontend/src/services', 'mobile/src/screens', 'mobile/src/components', 'shared/types', 'shared/utils', 'database/migrations', 'database/scripts'],
             forbidden_actions: [
               'Rewriting existing working code',
               'Changing architecture approach',

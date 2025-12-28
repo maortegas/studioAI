@@ -16,6 +16,18 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
   const [implementationProgress, setImplementationProgress] = useState((session as any).implementation_progress || 0);
   const [status, setStatus] = useState(session.status);
   const [isConnected, setIsConnected] = useState(false);
+  const [testStats, setTestStats] = useState({
+    total: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0
+  });
+  const [tddCycles, setTddCycles] = useState({
+    completed: 0,
+    currentBatch: 0,
+    totalBatches: 0,
+    progress: 0
+  });
   const outputRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -64,6 +76,44 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
           setStatus(event.payload.status);
           eventSource.close();
           setIsConnected(false);
+        } else if (event.type === 'test_execution_result') {
+          // Update test statistics incrementally
+          setTestStats(prev => ({
+            total: prev.total + (event.payload.total || 0),
+            passed: prev.passed + (event.payload.passed || 0),
+            failed: prev.failed + (event.payload.failed || 0),
+            skipped: prev.skipped + (event.payload.skipped || 0)
+          }));
+        } else if (event.type === 'tdd_batch_completed') {
+          // Update TDD cycle information
+          setTddCycles(prev => ({
+            completed: event.payload.batch_number || prev.completed + 1,
+            currentBatch: event.payload.batch_number || prev.currentBatch,
+            totalBatches: event.payload.total_tests ? Math.ceil(event.payload.total_tests / (event.payload.batch_end - event.payload.batch_start + 1)) : prev.totalBatches,
+            progress: event.payload.tests_completed && event.payload.total_tests 
+              ? Math.round((event.payload.tests_completed / event.payload.total_tests) * 100)
+              : prev.progress
+          }));
+          // Also update test stats from batch results
+          if (event.payload.test_results) {
+            setTestStats(prev => ({
+              total: prev.total + (event.payload.test_results.total || 0),
+              passed: prev.passed + (event.payload.test_results.passed || 0),
+              failed: prev.failed + (event.payload.test_results.failed || 0),
+              skipped: prev.skipped + (event.payload.test_results.skipped || 0)
+            }));
+          }
+        } else if (event.type === 'tdd_cycle_progress') {
+          // Update TDD cycle progress
+          setTddCycles(prev => ({
+            ...prev,
+            progress: event.payload.progress_percentage || 0,
+            currentBatch: event.payload.test_index ? Math.floor(event.payload.test_index / 3) + 1 : prev.currentBatch,
+            totalBatches: event.payload.total_tests ? Math.ceil(event.payload.total_tests / 3) : prev.totalBatches
+          }));
+        } else if (event.type === 'test_execution_summary') {
+          // Final summary - can be used to verify totals
+          console.log('Test execution summary:', event.payload);
         }
       },
       (error) => {
@@ -226,6 +276,59 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
             <p className="text-xs text-gray-500 dark:text-gray-400">
               📄 Currently working on: <span className="font-mono">{currentFile}</span>
             </p>
+          )}
+          
+          {/* Test Statistics */}
+          {(testStats.total > 0 || tddCycles.completed > 0) && (
+            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
+              {testStats.total > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Test Results
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="text-green-600 dark:text-green-400 font-medium">
+                      ✅ {testStats.passed} passed
+                    </span>
+                    <span className="text-red-600 dark:text-red-400 font-medium">
+                      ❌ {testStats.failed} failed
+                    </span>
+                    <span className="text-yellow-600 dark:text-yellow-400 font-medium">
+                      ⏭️ {testStats.skipped} skipped
+                    </span>
+                    <span className="text-gray-600 dark:text-gray-400">
+                      📈 Total: {testStats.total}
+                    </span>
+                  </div>
+                </div>
+              )}
+              
+              {tddCycles.completed > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    TDD Cycles
+                  </div>
+                  <div className="flex items-center gap-3 text-xs mb-1">
+                    <span className="text-blue-600 dark:text-blue-400 font-medium">
+                      Batch {tddCycles.completed} of {tddCycles.totalBatches || '?'} completed
+                    </span>
+                    {tddCycles.progress > 0 && (
+                      <span className="text-gray-600 dark:text-gray-400">
+                        {tddCycles.progress}% progress
+                      </span>
+                    )}
+                  </div>
+                  {tddCycles.progress > 0 && (
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                      <div 
+                        className="bg-green-600 dark:bg-green-500 h-1.5 rounded-full transition-all duration-300" 
+                        style={{ width: `${tddCycles.progress}%` }}
+                      ></div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
 

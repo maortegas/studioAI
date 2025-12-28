@@ -217,4 +217,3 @@ Después de implementar:
 
 1. Crear una nueva sesión TDD
 2. Verificar que los tests se crean en `tests/unit/{story-title}.test.js`
-3. Verificar que las fases GREEN/REFACTOR trabajan sobre el mismo archivo
