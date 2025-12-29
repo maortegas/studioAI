@@ -71,6 +71,16 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
         } else if (event.type === 'completed') {
           setStatus('completed');
           setProgress(100);
+
+          // Update test stats from completed event payload if available
+          if (event.payload.test_summary) {
+            setTestStats({
+              total: event.payload.test_summary.total || 0,
+              passed: event.payload.test_summary.passed || 0,
+              failed: event.payload.test_summary.failed || 0,
+              skipped: event.payload.test_summary.skipped || 0
+            });
+          }
         } else if (event.type === 'error') {
           console.error('Coding session error:', event.payload.error);
         } else if (event.type === 'session_ended') {
@@ -220,6 +230,26 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
         </div>
 
         {/* Session Completed Banner */}
+        {status === 'completed' && testStats.total > 0 && testStats.failed === 0 && !isClosing && (
+          <div className="px-6 py-3 bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800">
+            <div className="flex items-center space-x-2 text-sm text-green-800 dark:text-green-300">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-medium">✅ All tests passed ({testStats.passed}/{testStats.total}) - Session completed successfully!</span>
+            </div>
+          </div>
+        )}
+        {status === 'completed' && testStats.total > 0 && testStats.failed > 0 && !isClosing && (
+          <div className="px-6 py-3 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
+            <div className="flex items-center space-x-2 text-sm text-yellow-800 dark:text-yellow-300">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="font-medium">⚠️ Session completed but {testStats.failed} test(s) failed ({testStats.passed}/{testStats.total} passed)</span>
+            </div>
+          </div>
+        )}
         {isClosing && (
           <div className="px-6 py-3 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
             <div className="flex items-center space-x-2 text-sm text-yellow-800 dark:text-yellow-300">

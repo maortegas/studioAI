@@ -344,18 +344,26 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                             <span>Waiting...</span>
                           </span>
                         )}
-                        {/* Buttons for recently completed sessions */}
+                        {/* Success indicator for completed sessions with all tests passing */}
                         {session.status === 'completed' && isRecentlyCompleted(session) && (
-                          <button
-                            onClick={(e) => handleStartReview(session.id, e)}
-                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-600 dark:bg-green-500 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition"
-                            title="Review and fix errors in generated code"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <span>Review & Fix</span>
-                          </button>
+                          <>
+                            <span className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg border border-green-300 dark:border-green-600 font-medium">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span>✅ Tests Passed</span>
+                            </span>
+                            <button
+                              onClick={(e) => handleStartReview(session.id, e)}
+                              className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-600 dark:bg-green-500 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition"
+                              title="Review and fix errors in generated code"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span>Review & Fix</span>
+                            </button>
+                          </>
                         )}
                         {session.status === 'failed' && isRecentlyCompleted(session) && (
                           <button
