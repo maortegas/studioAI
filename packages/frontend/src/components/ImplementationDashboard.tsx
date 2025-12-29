@@ -17,15 +17,24 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
   const [starting, setStarting] = useState(false);
   const [viewingSession, setViewingSession] = useState<CodingSession | null>(null);
   const [testStrategy, setTestStrategy] = useState<TestStrategy>('tdd');
+  const [currentTime, setCurrentTime] = useState(Date.now());
   const { showToast } = useToast();
 
   useEffect(() => {
     loadData();
-    
+
     // Poll for updates every 3 seconds
     const interval = setInterval(loadDashboard, 3000);
     return () => clearInterval(interval);
   }, [projectId]);
+
+  // Update current time every second to refresh countdown timers
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadData = async () => {
     await Promise.all([loadDashboard(), loadStories()]);
@@ -183,9 +192,38 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
   }
 
   const availableStories = stories.filter((story) => !getStorySession(story.id));
-  const activeSessions = dashboard?.sessions.filter((s) => 
-    s.status === 'running' || s.status === 'pending' || s.status === 'paused' || 
-    s.status === 'generating_tests' || s.status === 'tests_generated'
+
+  // Helper function to check if a completed/failed session is still "recent" (within 30 seconds)
+  const isRecentlyCompleted = (session: CodingSession): boolean => {
+    if (session.status !== 'completed' && session.status !== 'failed') {
+      return false;
+    }
+
+    const completedAt = session.completed_at ? new Date(session.completed_at).getTime() : null;
+    if (!completedAt) {
+      return false;
+    }
+
+    const thirtySecondsAgo = currentTime - 30000;
+    return completedAt > thirtySecondsAgo;
+  };
+
+  // Helper function to get remaining seconds before session moves to history
+  const getRemainingSeconds = (session: CodingSession): number => {
+    if (!session.completed_at) return 0;
+    const completedAt = new Date(session.completed_at).getTime();
+    const elapsed = currentTime - completedAt;
+    const remaining = Math.max(0, 30 - Math.floor(elapsed / 1000));
+    return remaining;
+  };
+
+  const activeSessions = dashboard?.sessions.filter((s) =>
+    s.status === 'running' ||
+    s.status === 'pending' ||
+    s.status === 'paused' ||
+    s.status === 'generating_tests' ||
+    s.status === 'tests_generated' ||
+    isRecentlyCompleted(s)
   ) || [];
 
   return (
@@ -239,6 +277,12 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                         <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(session.status)}`}>
                           {session.status}
                         </span>
+                        {/* Show countdown for recently completed/failed sessions */}
+                        {isRecentlyCompleted(session) && (
+                          <span className="px-2 py-1 text-xs rounded-full font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 animate-pulse">
+                            ⏱️ Moving to history in {getRemainingSeconds(session)}s
+                          </span>
+                        )}
                       </div>
                       <h3 className="font-semibold text-gray-900 dark:text-white">{story?.title || 'Unknown Story'}</h3>
                       {session.current_file && (
@@ -300,16 +344,44 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                             <span>Waiting...</span>
                           </span>
                         )}
-                        <button
-                          onClick={(e) => handleDeleteSession(session.id, e)}
-                          className="flex items-center space-x-1 px-3 py-2 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg transition border border-red-300"
-                          title="Cancel/Delete session"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                          <span>Cancel</span>
-                        </button>
+                        {/* Buttons for recently completed sessions */}
+                        {session.status === 'completed' && isRecentlyCompleted(session) && (
+                          <button
+                            onClick={(e) => handleStartReview(session.id, e)}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-green-600 dark:bg-green-500 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition"
+                            title="Review and fix errors in generated code"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Review & Fix</span>
+                          </button>
+                        )}
+                        {session.status === 'failed' && isRecentlyCompleted(session) && (
+                          <button
+                            onClick={(e) => handleRetrySession(session.id, e)}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition"
+                            title="Retry failed session"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            <span>Retry</span>
+                          </button>
+                        )}
+                        {/* Cancel/Delete button - show for all non-completed sessions, or for recently completed */}
+                        {(session.status !== 'completed' && session.status !== 'failed') || isRecentlyCompleted(session) ? (
+                          <button
+                            onClick={(e) => handleDeleteSession(session.id, e)}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition border border-red-300 dark:border-red-600"
+                            title="Cancel/Delete session"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            <span>Delete</span>
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -505,8 +577,8 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
         </div>
       )}
 
-      {/* Completed/Failed Sessions */}
-      {dashboard && dashboard.sessions.filter((s) => s.status === 'completed' || s.status === 'failed').length > 0 && (
+      {/* Completed/Failed Sessions - Only show sessions that are NOT in activeSessions */}
+      {dashboard && dashboard.sessions.filter((s) => (s.status === 'completed' || s.status === 'failed') && !isRecentlyCompleted(s)).length > 0 && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/50">
           <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Session History</h2>
@@ -514,7 +586,7 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
           <div className="p-6">
             <div className="space-y-2">
               {dashboard.sessions
-                .filter((s) => s.status === 'completed' || s.status === 'failed')
+                .filter((s) => (s.status === 'completed' || s.status === 'failed') && !isRecentlyCompleted(s))
                 .map((session) => {
                   const story = stories.find((s) => s.id === session.story_id);
                   return (
