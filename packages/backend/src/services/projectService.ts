@@ -1,13 +1,16 @@
 import { ProjectRepository } from '../repositories/projectRepository';
 import { CreateProjectRequest, Project } from '@devflow-studio/shared';
 import { ensureDirectory, createFile, validatePath } from '../utils/fileSystem';
+import { ProjectStructureService } from './projectStructureService';
 import path from 'path';
 
 export class ProjectService {
   private projectRepo: ProjectRepository;
+  private structureService: ProjectStructureService;
 
   constructor() {
     this.projectRepo = new ProjectRepository();
+    this.structureService = new ProjectStructureService();
   }
 
   async getAllProjects(): Promise<Project[]> {
@@ -27,6 +30,10 @@ export class ProjectService {
 
     // Create project directory
     await ensureDirectory(data.base_path);
+
+    // Enforce MVC directory structure and create configuration files
+    console.log(`[ProjectService] Enforcing MVC structure for tech stack: ${data.tech_stack}`);
+    await this.structureService.enforceStructure(data.base_path, data.tech_stack);
 
     // Create initial files
     const prdPath = path.join(data.base_path, 'docs', 'PRD.md');
