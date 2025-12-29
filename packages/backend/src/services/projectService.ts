@@ -31,9 +31,28 @@ export class ProjectService {
     // Create project directory
     await ensureDirectory(data.base_path);
 
-    // Enforce MVC directory structure and create configuration files
-    console.log(`[ProjectService] Enforcing MVC structure for tech stack: ${data.tech_stack}`);
-    await this.structureService.enforceStructure(data.base_path, data.tech_stack);
+    // Create MVC directory structure
+    console.log(`[ProjectService] Creating MVC structure for tech stack: ${data.tech_stack}`);
+    await this.structureService.createProjectStructure(data.base_path, data.tech_stack);
+
+    // Create package.json
+    await this.structureService.createPackageJson(data.base_path, data.tech_stack);
+
+    // Create Jest configuration
+    await this.structureService.createJestConfig(data.base_path, data.tech_stack);
+
+    // Create TypeScript configuration
+    await this.structureService.createTypeScriptConfig(data.base_path, data.tech_stack);
+
+    // Clean up any Jest config conflicts
+    await this.structureService.cleanupJestConfigConflict(data.base_path);
+
+    // Install dependencies
+    console.log(`[ProjectService] Installing dependencies...`);
+    const installResult = await this.structureService.installDependencies(data.base_path, data.tech_stack);
+    if (!installResult.success) {
+      console.warn(`[ProjectService] ⚠️ npm install failed: ${installResult.error}`);
+    }
 
     // Create initial files
     const prdPath = path.join(data.base_path, 'docs', 'PRD.md');

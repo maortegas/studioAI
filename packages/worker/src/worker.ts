@@ -961,25 +961,7 @@ async function processJob(jobId: string) {
           // For TDD all-at-once, handle completion differently
           if (isTDDAllAtOnce || isTDDRefactor) {
             console.log(`[Worker] TDD all-at-once implementation completed for session ${codingSessionId}`);
-            
-            // Update session status to completed
-            // Note: implementation_progress has a CHECK constraint (likely <= 50)
-            // Using 50 to match other completion paths and avoid constraint violation
-            await pool.query(
-              'UPDATE coding_sessions SET status = $1, implementation_progress = $2, progress = $3, completed_at = $4 WHERE id = $5',
-              ['completed', 50, 100, new Date(), codingSessionId]
-            );
-            
-            await pool.query(
-              'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
-              [codingSessionId, 'completed', JSON.stringify({ 
-                message: 'TDD all-at-once implementation completed',
-                phase: 'tdd_all_at_once',
-                total_tests: job.args?.total_tests || 0
-              })]
-            );
-            
-            console.log(`[Worker] Coding session ${codingSessionId} completed (TDD all-at-once)`);
+            console.log(`[Worker] ⚠️ IMPORTANT: Validating tests BEFORE marking as completed`);
 
             // Clean up incorrectly placed files (move from root src/ to MVC directories)
             try {
@@ -1004,34 +986,13 @@ async function processJob(jobId: string) {
               // Don't fail the session if cleanup fails
             }
 
-            // Update breakdown task status to 'done'
-            await updateBreakdownTaskStatus(codingSessionId);
-            
-            // Verify that the session is not in a final state before executing tests
-            const sessionStatusCheck = await pool.query(
-              'SELECT status FROM coding_sessions WHERE id = $1',
-              [codingSessionId]
-            );
-
-            if (sessionStatusCheck.rows.length === 0) {
-              console.warn(`[Worker] ⚠️ Session ${codingSessionId} not found, skipping test execution`);
-              return;
-            }
-
-            const currentStatus = sessionStatusCheck.rows[0].status;
-            
-            // Only execute tests if the session is not in a final state
-            if (currentStatus === 'completed' || currentStatus === 'failed') {
-              console.log(`[Worker] ⏭️ Skipping test execution - session already in final state: ${currentStatus}`);
-              return;
-            }
-            
-            // Execute test suites to verify all tests pass
-            // Include failed tests in case we're re-running after a previous failure
+            // ✅ CRITICAL FIX: Execute test suites BEFORE marking as completed
+            // This validates that the implementation actually works
             let allTestsPassed = false;
             let testSummary = { total: 0, passed: 0, failed: 0, skipped: 0 };
 
             try {
+              console.log(`[Worker] 🧪 Executing test suites to validate implementation...`);
               await executeTestSuitesForSession(codingSessionId, true);
               
               // Check if all test suites passed
@@ -1258,13 +1219,13 @@ async function processJob(jobId: string) {
                   return; // Exit - refactoring job will continue the cycle
                 } else {
                   console.log(`[Worker] ✅ All tests passed (${testSummary.passed}/${testSummary.total}). TDD cycle complete.`);
-                  
-                  // Update session to reflect successful completion
+
+                  // ✅ CRITICAL FIX: Mark as completed ONLY AFTER tests pass
                   await pool.query(
-                    'UPDATE coding_sessions SET status = $1, error = NULL, implementation_progress = $2 WHERE id = $3',
-                    ['completed', 50, codingSessionId]
+                    'UPDATE coding_sessions SET status = $1, error = NULL, implementation_progress = $2, progress = $3, completed_at = $4 WHERE id = $5',
+                    ['completed', 50, 100, new Date(), codingSessionId]
                   );
-                  
+
                   // Emit event for successful TDD completion
                   await pool.query(
                     'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
@@ -1274,6 +1235,9 @@ async function processJob(jobId: string) {
                       test_summary: testSummary
                     })]
                   );
+
+                  // Update breakdown task status to 'done'
+                  await updateBreakdownTaskStatus(codingSessionId);
                 }
               } else {
                 // No test suites found - this is a problem for TDD
@@ -1312,10 +1276,8 @@ async function processJob(jobId: string) {
               return; // Exit early
             }
 
-            // TDD cycle complete - do NOT create QA session
-            // Following TDD principles: tests pass, implementation complete
+            // ✅ Tests executed and validated - session marked as completed above
             console.log(`[Worker] ✅ TDD all-at-once cycle completed for session ${codingSessionId}`);
-            console.log(`[Worker] 📊 Final test results: ${testSummary.passed} passed, ${testSummary.failed} failed, ${testSummary.skipped} skipped (${testSummary.total} total)`);
             console.log(`[Worker] ℹ️  No QA session created - TDD cycle is self-contained`);
 
             return; // Exit early, don't process as regular implementation
@@ -4770,26 +4732,28 @@ async function parseAndSaveTestSuites(
     console.log(`[Worker] ✅ Using MVC structure for tests: ${testBaseDir}/unit/`);
     
     // Parse test code from AI output
-    // Look for code blocks with test code
-    const codeBlockRegex = /```(?:javascript|js|typescript|ts|test)?\s*\n([\s\S]*?)```/g;
+    // Look for code blocks with test code (must be in markdown code blocks)
+    const codeBlockRegex = /```(?:javascript|js|typescript|ts|test|tsx|jsx)?\s*\n([\s\S]*?)```/g;
     const codeBlocks: string[] = [];
     let match;
-    
+
     while ((match = codeBlockRegex.exec(aiOutput)) !== null) {
-      codeBlocks.push(match[1]);
-    }
-    
-    // If no code blocks found, try to extract the entire output as test code
-    if (codeBlocks.length === 0) {
-      // Try to find test patterns in the output
-      const testPattern = /(describe|it|test|suite|beforeEach|afterEach)[\s\S]*/i;
-      const testMatch = aiOutput.match(testPattern);
-      if (testMatch) {
-        codeBlocks.push(aiOutput);
+      const code = match[1].trim();
+      // Validate that it's actual code, not narrative text
+      if (code.includes('describe(') || code.includes('it(') || code.includes('test(') ||
+          code.includes('import ') || code.includes('require(') || code.includes('const ') ||
+          code.includes('function ')) {
+        codeBlocks.push(code);
       } else {
-        // Fallback: use entire output
-        codeBlocks.push(aiOutput);
+        console.warn('[Worker] ⚠️ Skipping code block that appears to be narrative text');
       }
+    }
+
+    // If no valid code blocks found, reject the output
+    if (codeBlocks.length === 0) {
+      console.error('[Worker] ❌ No valid test code found in AI output');
+      console.error('[Worker] Output preview:', aiOutput.substring(0, 500));
+      throw new Error('AI generated narrative text instead of test code. No code blocks with tests found in output.');
     }
     
     // Determine test type based on content and programmer type

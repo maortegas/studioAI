@@ -792,8 +792,21 @@ export class CodingSessionService {
     }
 
     lines.push(`\n## Output Format\n`);
-    lines.push(`Provide the test code in the following format:\n\n`);
-    lines.push(`**CRITICAL - Test Structure Requirements:**\n`);
+    lines.push(`\n**🚨 CRITICAL - OUTPUT FORMAT:**\n`);
+    lines.push(`- Your response MUST contain ONLY executable test code inside markdown code blocks\n`);
+    lines.push(`- DO NOT include explanations, summaries, or narrative text\n`);
+    lines.push(`- DO NOT write "I've generated..." or "Here's the test suite..."\n`);
+    lines.push(`- Start IMMEDIATELY with a code block: \\\`\\\`\\\`javascript or \\\`\\\`\\\`typescript\n`);
+    lines.push(`- End with the closing \\\`\\\`\\\`\n`);
+    lines.push(`- If you include ANY text outside code blocks, the tests will FAIL to execute\n\n`);
+    lines.push(`**CORRECT Example:**\n`);
+    lines.push(`\\\`\\\`\\\`javascript\n`);
+    lines.push(`const { myFunction } = require('../src/services/myService');\n`);
+    lines.push(`describe('MyFunction', () => { ... });\n`);
+    lines.push(`\\\`\\\`\\\`\n\n`);
+    lines.push(`**WRONG Example (DO NOT DO THIS):**\n`);
+    lines.push(`I've generated a test suite for... [explanatory text] ❌\n\n`);
+    lines.push(`**Test Structure Requirements:**\n`);
     lines.push(`Each test file MUST include:\n\n`);
     lines.push(`1. **All necessary imports at the top:**\n`);
     lines.push(`   - Test framework imports (Jest, Mocha, etc.)\n`);
