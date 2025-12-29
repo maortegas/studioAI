@@ -1584,7 +1584,7 @@ async function processJob(jobId: string) {
               console.warn(`[Worker] ⚠️ Batch tests did not pass. Results: ${batchTestResults.passed} passed, ${batchTestResults.failed} failed`);
               // Increment stuck count
               tddCycle.stuck_count = (tddCycle.stuck_count || 0) + 1;
-              
+
               if (tddCycle.stuck_count >= 3) {
                 // Too many failed attempts, skip to next batch
                 console.error(`[Worker] ❌ Stuck on batch ${batchStart + 1}-${batchEnd} after 3 attempts. Moving to next batch.`);
@@ -1596,10 +1596,113 @@ async function processJob(jobId: string) {
                 await codingSessionService.advanceToNextBatch(codingSessionId);
                 return;
               }
-              
-              // Try GREEN phase again
-              await codingSessionService.executeBatchGREEN(codingSessionId, tddCycle);
-              return;
+
+              // ✅ INTELLIGENT RETRY: Capture failure context and use improved prompt
+              console.log(`[Worker] 🔄 Intelligent retry attempt ${tddCycle.stuck_count}/3 - Capturing failure context...`);
+
+              try {
+                // 1. Capture detailed failure context
+                const failureContext = await captureBatchFailureContext(
+                  codingSessionId,
+                  batchStart,
+                  batchSize,
+                  batchTestResults.output || '',
+                  job.project_id
+                );
+
+                console.log(`[Worker] 📊 Failure analysis: ${failureContext.failedTests.length} tests failed, ${Object.keys(failureContext.currentImplementation).length} implementation files found`);
+
+                // 2. Get story and session info for context
+                const sessionResult = await pool.query(
+                  'SELECT story_id FROM coding_sessions WHERE id = $1',
+                  [codingSessionId]
+                );
+
+                if (sessionResult.rows.length === 0) {
+                  console.error('[Worker] Session not found for failure correction');
+                  await codingSessionService.executeBatchGREEN(codingSessionId, tddCycle);
+                  return;
+                }
+
+                const storyId = sessionResult.rows[0].story_id;
+                const storyResult = await pool.query(
+                  'SELECT * FROM tasks WHERE id = $1',
+                  [storyId]
+                );
+
+                if (storyResult.rows.length === 0) {
+                  console.error('[Worker] Story not found for failure correction');
+                  await codingSessionService.executeBatchGREEN(codingSessionId, tddCycle);
+                  return;
+                }
+
+                const story = storyResult.rows[0];
+                const batchTests = tddCycle.all_tests.slice(batchStart, batchEnd);
+
+                // 3. Build intelligent correction prompt with full error context
+                const correctionPrompt = await codingSessionService.buildFailureCorrectionPrompt(
+                  job.project_id,
+                  story,
+                  batchTests,
+                  tddCycle,
+                  failureContext,
+                  tddCycle.stuck_count
+                );
+
+                console.log(`[Worker] 📝 Built intelligent correction prompt with ${failureContext.failedTests.length} failure details`);
+
+                // 4. Create AI job with improved prompt
+                const correctionJob = await pool.query(
+                  `INSERT INTO ai_jobs (project_id, provider, mode, prompt, status, created_at, args)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   RETURNING *`,
+                  [
+                    job.project_id,
+                    'cursor',
+                    'agent',
+                    correctionPrompt,
+                    'pending',
+                    new Date(),
+                    JSON.stringify({
+                      coding_session_id: codingSessionId,
+                      phase: 'tdd_green',
+                      batch_start: batchStart,
+                      batch_size: batchSize,
+                      attempt: tddCycle.stuck_count,
+                      is_retry: true
+                    })
+                  ]
+                );
+
+                console.log(`[Worker] ✅ Created intelligent retry job ${correctionJob.rows[0].id} with failure context`);
+
+                // 5. Update session with retry info
+                await pool.query(
+                  `UPDATE coding_sessions SET tdd_cycle = $1::jsonb WHERE id = $2`,
+                  [JSON.stringify(tddCycle), codingSessionId]
+                );
+
+                // 6. Emit event for tracking
+                await pool.query(
+                  'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                  [codingSessionId, 'intelligent_retry', JSON.stringify({
+                    batch_start: batchStart + 1,
+                    batch_end: batchEnd,
+                    attempt: tddCycle.stuck_count,
+                    failed_tests: failureContext.failedTests.length,
+                    retry_job_id: correctionJob.rows[0].id
+                  })]
+                );
+
+                return;
+
+              } catch (retryError: any) {
+                console.error('[Worker] Error during intelligent retry setup:', retryError);
+                console.log('[Worker] Falling back to standard retry...');
+                // Fallback to standard retry if intelligent retry fails
+                await codingSessionService.executeBatchGREEN(codingSessionId, tddCycle);
+                return;
+              }
             }
             
             // Reset stuck count on success
@@ -5278,6 +5381,184 @@ async function executeTestSuitesForSession(codingSessionId: string, includeFaile
 }
 
 /**
+ * Parse Jest output to extract expected vs received values and error details from failures
+ */
+function parseJestFailureDetails(jestOutput: string): {
+  expected: string | null;
+  received: string | null;
+  errorType: string | null;
+  errorMessage: string | null;
+} {
+  const result = {
+    expected: null as string | null,
+    received: null as string | null,
+    errorType: null as string | null,
+    errorMessage: null as string | null
+  };
+
+  // Extract error type (e.g., "ValidationError:", "NotFoundError:")
+  const errorTypeMatch = jestOutput.match(/(\w+Error):/);
+  if (errorTypeMatch) {
+    result.errorType = errorTypeMatch[1];
+  }
+
+  // Extract expected value (multiple patterns)
+  const expectedPatterns = [
+    /Expected substring:\s*"([^"]+)"/i,
+    /Expected:\s*(.+?)(?:\n|Received)/is,
+    /expect\(.*?\)\.toThrow\(['"](.+?)['"]\)/,
+    /expect\(.*?\)\.toBe\((.+?)\)/,
+    /expect\(.*?\)\.toEqual\((.+?)\)/
+  ];
+
+  for (const pattern of expectedPatterns) {
+    const match = jestOutput.match(pattern);
+    if (match && match[1]) {
+      result.expected = match[1].trim();
+      break;
+    }
+  }
+
+  // Extract received value
+  const receivedPatterns = [
+    /Received message:\s*"([^"]+)"/i,
+    /Received:\s*(.+?)(?:\n|at\s|$)/is,
+    /but got:\s*(.+?)(?:\n|$)/i
+  ];
+
+  for (const pattern of receivedPatterns) {
+    const match = jestOutput.match(pattern);
+    if (match && match[1]) {
+      result.received = match[1].trim();
+      break;
+    }
+  }
+
+  // Extract error message (first line after error type)
+  const errorMsgMatch = jestOutput.match(/(\w+Error):\s*(.+?)(?:\n|$)/);
+  if (errorMsgMatch && errorMsgMatch[2]) {
+    result.errorMessage = errorMsgMatch[2].trim();
+  }
+
+  return result;
+}
+
+/**
+ * Capture failure context for intelligent retry
+ */
+async function captureBatchFailureContext(
+  codingSessionId: string,
+  batchStart: number,
+  batchSize: number,
+  testOutput: string,
+  projectId: string
+): Promise<{
+  failedTests: Array<{
+    name: string;
+    expected: string | null;
+    received: string | null;
+    errorType: string | null;
+    errorMessage: string | null;
+    fullOutput: string;
+  }>;
+  currentImplementation: Record<string, string>;
+  testFilePath: string;
+}> {
+  const context = {
+    failedTests: [] as Array<{
+      name: string;
+      expected: string | null;
+      received: string | null;
+      errorType: string | null;
+      errorMessage: string | null;
+      fullOutput: string;
+    }>,
+    currentImplementation: {} as Record<string, string>,
+    testFilePath: ''
+  };
+
+  try {
+    // Get project info
+    const projectResult = await pool.query(
+      'SELECT base_path FROM projects WHERE id = $1',
+      [projectId]
+    );
+
+    if (projectResult.rows.length === 0) {
+      return context;
+    }
+
+    const projectPath = projectResult.rows[0].base_path;
+
+    // Get test suites for this session
+    const testSuitesResult = await pool.query(
+      `SELECT ts.name, ts.file_path, ts.test_code, te.output, te.error_message, te.status
+       FROM test_suites ts
+       LEFT JOIN test_executions te ON te.test_suite_id = ts.id
+       WHERE ts.coding_session_id = $1
+       ORDER BY te.completed_at DESC
+       LIMIT $2`,
+      [codingSessionId, batchSize]
+    );
+
+    // Parse test output for each failed test
+    for (const test of testSuitesResult.rows) {
+      if (test.status === 'failed' && test.output) {
+        const parsed = parseJestFailureDetails(test.output);
+        context.failedTests.push({
+          name: test.name,
+          expected: parsed.expected,
+          received: parsed.received,
+          errorType: parsed.errorType,
+          errorMessage: parsed.errorMessage || test.error_message,
+          fullOutput: test.output
+        });
+
+        // Store test file path
+        if (test.file_path && !context.testFilePath) {
+          context.testFilePath = test.file_path;
+        }
+      }
+    }
+
+    // Read current implementation files
+    const commonPaths = [
+      'backend/src/services',
+      'backend/src/controllers',
+      'backend/src/models',
+      'backend/src/utils',
+      'backend/src/types'
+    ];
+
+    for (const dirPath of commonPaths) {
+      const fullDirPath = path.join(projectPath, dirPath);
+      try {
+        const files = await fs.readdir(fullDirPath);
+        for (const file of files) {
+          if (file.endsWith('.ts') || file.endsWith('.js')) {
+            const filePath = path.join(fullDirPath, file);
+            try {
+              const content = await fs.readFile(filePath, 'utf8');
+              const relativePath = path.relative(projectPath, filePath);
+              context.currentImplementation[relativePath] = content;
+            } catch {
+              // Skip files that can't be read
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist, skip
+      }
+    }
+
+    return context;
+  } catch (error) {
+    console.error('[Worker] Error capturing failure context:', error);
+    return context;
+  }
+}
+
+/**
  * Helper function to execute tests for a specific batch in TDD cycle
  */
 async function executeBatchTests(codingSessionId: string, batchStart: number, batchSize: number): Promise<{
@@ -5286,6 +5567,7 @@ async function executeBatchTests(codingSessionId: string, batchStart: number, ba
   failed: number;
   skipped: number;
   success: boolean;
+  output?: string;
 }> {
   try {
     // Get project info
@@ -5398,11 +5680,12 @@ async function executeBatchTests(codingSessionId: string, batchStart: number, ba
       passed: stats.passed,
       failed: stats.failed,
       skipped: stats.skipped,
-      success: testResult.success && stats.failed === 0
+      success: testResult.success && stats.failed === 0,
+      output: testResult.output // Include full output for failure analysis
     };
   } catch (error: any) {
     console.error(`[Worker] Error executing batch tests:`, error);
-    return { total: 0, passed: 0, failed: 0, skipped: 0, success: false };
+    return { total: 0, passed: 0, failed: 0, skipped: 0, success: false, output: '' };
   }
 }
 

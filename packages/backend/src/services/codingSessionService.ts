@@ -2004,6 +2004,132 @@ Start implementation now.
   }
 
   /**
+   * Build Failure Correction Prompt: Intelligent retry with full error context
+   * Used when batch GREEN phase fails - provides detailed feedback for fixing
+   */
+  async buildFailureCorrectionPrompt(
+    projectId: string,
+    story: any,
+    batchTests: Array<{name: string; code: string; status: string; attempts: number}>,
+    tddCycle: TDDCycle,
+    failureContext: {
+      failedTests: Array<{
+        name: string;
+        expected: string | null;
+        received: string | null;
+        errorType: string | null;
+        errorMessage: string | null;
+        fullOutput: string;
+      }>;
+      currentImplementation: Record<string, string>;
+      testFilePath: string;
+    },
+    attemptNumber: number
+  ): Promise<string> {
+    const lines: string[] = [];
+    const project = await this.projectRepo.findById(projectId);
+
+    lines.push(`# TDD GREEN PHASE: CORRECTION ATTEMPT ${attemptNumber}/3\n\n`);
+
+    lines.push(`## ⚠️ PREVIOUS ATTEMPT FAILED\n\n`);
+    lines.push(`Your previous implementation did NOT pass the tests. You must analyze the failures and fix your code.\n\n`);
+
+    // Show failed tests with detailed analysis
+    lines.push(`## ❌ Failed Tests Analysis (${failureContext.failedTests.length} test${failureContext.failedTests.length !== 1 ? 's' : ''} failed)\n\n`);
+
+    for (const test of failureContext.failedTests) {
+      lines.push(`### Test: "${test.name}"\n\n`);
+
+      if (test.expected && test.received) {
+        lines.push(`**What the test expected:**\n\`\`\`\n${test.expected}\n\`\`\`\n\n`);
+        lines.push(`**What your code actually did:**\n\`\`\`\n${test.received}\n\`\`\`\n\n`);
+      }
+
+      if (test.errorType) {
+        lines.push(`**Error Type:** \`${test.errorType}\`\n\n`);
+      }
+
+      if (test.errorMessage) {
+        lines.push(`**Error Message:** ${test.errorMessage}\n\n`);
+      }
+
+      if (test.fullOutput && test.fullOutput.length > 100) {
+        // Show relevant portion of output (first 1000 chars)
+        lines.push(`**Test Output (excerpt):**\n\`\`\`\n${test.fullOutput.substring(0, 1000)}\`\`\`\n\n`);
+      }
+
+      lines.push(`---\n\n`);
+    }
+
+    // Show current implementation
+    if (Object.keys(failureContext.currentImplementation).length > 0) {
+      lines.push(`## 📄 Your Current Implementation\n\n`);
+      lines.push(`**IMPORTANT:** This is the code you wrote that is failing the tests.\n\n`);
+
+      for (const [filePath, code] of Object.entries(failureContext.currentImplementation)) {
+        lines.push(`### File: \`${filePath}\`\n\n`);
+        lines.push(`\`\`\`typescript\n${code}\n\`\`\`\n\n`);
+      }
+    }
+
+    // Critical instructions for correction
+    lines.push(`## 🎯 CRITICAL INSTRUCTIONS FOR CORRECTION\n\n`);
+    lines.push(`**You MUST follow these steps:**\n\n`);
+    lines.push(`1. **READ the test expectations carefully**\n`);
+    lines.push(`   - Look at what the test expects (expected value)\n`);
+    lines.push(`   - Compare with what your code actually did (received value)\n`);
+    lines.push(`   - Find the exact mismatch\n\n`);
+
+    lines.push(`2. **ANALYZE the error messages**\n`);
+    lines.push(`   - Understand WHY the tests failed\n`);
+    lines.push(`   - Identify which part of your code is wrong\n`);
+    lines.push(`   - Check for common issues below\n\n`);
+
+    lines.push(`3. **FIX your implementation**\n`);
+    lines.push(`   - Modify your code to match test expectations\n`);
+    lines.push(`   - DO NOT change the tests - they are correct\n`);
+    lines.push(`   - Make minimal changes to pass the tests\n\n`);
+
+    lines.push(`## 🐛 Common Issues to Check:\n\n`);
+    lines.push(`- **Return type mismatch:** Are you throwing an exception when you should return \`undefined\` or \`false\`?\n`);
+    lines.push(`- **Error message text:** Does your error message EXACTLY match what the test expects?\n`);
+    lines.push(`- **Return value:** Are you returning the right type (boolean, object, undefined)?\n`);
+    lines.push(`- **Edge cases:** Empty strings, null, undefined - are they handled correctly?\n`);
+    lines.push(`- **Function signature:** Parameters and return type match the test?\n\n`);
+
+    // Show test file for reference
+    if (failureContext.testFilePath) {
+      lines.push(`## 📋 Test File Location\n\n`);
+      lines.push(`Tests are in: \`${failureContext.testFilePath}\`\n\n`);
+    }
+
+    // Add original batch tests for context
+    lines.push(`## 📝 All Tests in This Batch\n\n`);
+    for (const test of batchTests) {
+      lines.push(`### Test: ${test.name}\n\n`);
+      lines.push(`\`\`\`typescript\n${test.code}\n\`\`\`\n\n`);
+    }
+
+    // Add tech stack info
+    if (project?.tech_stack) {
+      lines.push(`## Tech Stack\n\n`);
+      lines.push(`**Stack:** ${project.tech_stack}\n\n`);
+    }
+
+    // Final instructions
+    lines.push(`## ✅ Expected Outcome\n\n`);
+    lines.push(`Provide CORRECTED implementation that:\n`);
+    lines.push(`1. Makes ALL ${batchTests.length} tests in this batch pass\n`);
+    lines.push(`2. Addresses the specific errors shown above\n`);
+    lines.push(`3. Follows the exact expectations of the tests\n`);
+    lines.push(`4. Includes test execution output showing all tests passing\n\n`);
+
+    lines.push(`**Remember:** The tests define the contract. Your code must fulfill that contract exactly.\n`);
+
+    return lines.join('');
+  }
+
+  /**
    * Build REFACTOR Phase prompt: Improve code while keeping tests passing
    */
   private async buildREFACTORPhasePrompt(projectId: string, story: any, tddCycle: TDDCycle): Promise<string> {
