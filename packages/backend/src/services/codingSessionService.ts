@@ -657,6 +657,42 @@ export class CodingSessionService {
     lines.push(`6. DO NOT write "I've generated..." or "Here's..."\n`);
     lines.push(`7. If you include text outside code blocks, the tests will FAIL\n\n`);
 
+    lines.push(`🚨 **CRITICAL - SINGLE FILE ONLY:**\n\n`);
+    lines.push(`**YOU MUST GENERATE EXACTLY ONE (1) TEST FILE - NOT MULTIPLE FILES**\n\n`);
+
+    lines.push(`❌ **WRONG - DO NOT DO THIS:**\n`);
+    lines.push(`\`\`\`javascript\n`);
+    lines.push(`// backend/tests/unit/authService.test.js\n`);
+    lines.push(`import jwt from 'jsonwebtoken';\n`);
+    lines.push(`describe('AuthService', () => { ... });\n`);
+    lines.push(`\n`);
+    lines.push(`// backend/tests/unit/authMiddleware.test.js ❌ SECOND FILE - FORBIDDEN!\n`);
+    lines.push(`import jwt from 'jsonwebtoken'; // ❌ DUPLICATE IMPORT - CAUSES ERROR!\n`);
+    lines.push(`describe('AuthMiddleware', () => { ... });\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`✅ **CORRECT - DO THIS:**\n`);
+    lines.push(`\`\`\`javascript\n`);
+    lines.push(`// ONE file with ALL related tests\n`);
+    lines.push(`import jwt from 'jsonwebtoken';\n`);
+    lines.push(`import { authService } from '../services/authService';\n`);
+    lines.push(`import { authMiddleware } from '../middleware/authMiddleware';\n\n`);
+    lines.push(`describe('Authentication System', () => {\n`);
+    lines.push(`  describe('AuthService', () => {\n`);
+    lines.push(`    it('should register user', () => { ... });\n`);
+    lines.push(`  });\n`);
+    lines.push(`  describe('AuthMiddleware', () => {\n`);
+    lines.push(`    it('should validate token', () => { ... });\n`);
+    lines.push(`  });\n`);
+    lines.push(`});\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`**WHY THIS MATTERS:**\n`);
+    lines.push(`- Multiple files in one response = DUPLICATE IMPORTS = SYNTAX ERROR = 0 TESTS RUN ❌\n`);
+    lines.push(`- One file with nested describe() blocks = Clean imports = ALL TESTS RUN ✅\n`);
+    lines.push(`- The system will save your response as a SINGLE .test.js file\n`);
+    lines.push(`- Concatenating multiple files breaks Jest execution\n\n`);
+
     lines.push(`═══════════════════════════════════════════════════════════════\n\n`);
 
     // Inject RFC Contract section if excerpt is provided
