@@ -16,6 +16,7 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
   const [implementationProgress, setImplementationProgress] = useState((session as any).implementation_progress || 0);
   const [status, setStatus] = useState(session.status);
   const [isConnected, setIsConnected] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
   const [testStats, setTestStats] = useState({
     total: 0,
     passed: 0,
@@ -70,12 +71,29 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
         } else if (event.type === 'completed') {
           setStatus('completed');
           setProgress(100);
+
+          // Update test stats from completed event payload if available
+          if (event.payload.test_summary) {
+            setTestStats({
+              total: event.payload.test_summary.total || 0,
+              passed: event.payload.test_summary.passed || 0,
+              failed: event.payload.test_summary.failed || 0,
+              skipped: event.payload.test_summary.skipped || 0
+            });
+          }
         } else if (event.type === 'error') {
           console.error('Coding session error:', event.payload.error);
         } else if (event.type === 'session_ended') {
           setStatus(event.payload.status);
-          eventSource.close();
-          setIsConnected(false);
+          setIsClosing(true);
+          console.log('[SSE] Session ended, stream will close. Message:', event.payload.message);
+
+          // Close connection after a brief delay to ensure UI updates
+          setTimeout(() => {
+            eventSource.close();
+            setIsConnected(false);
+            setIsClosing(false);
+          }, 1000);
         } else if (event.type === 'test_execution_result') {
           // Update test statistics incrementally
           setTestStats(prev => ({
@@ -183,7 +201,9 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
                 {session.programmer_type.charAt(0).toUpperCase() + session.programmer_type.slice(1)} Developer
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                {isConnected ? (
+                {isClosing ? (
+                  <span className="text-yellow-600 dark:text-yellow-400 animate-pulse">⏳ Receiving final events...</span>
+                ) : isConnected ? (
                   <span className="text-green-600 dark:text-green-400">● Connected</span>
                 ) : (
                   <span className="text-gray-400 dark:text-gray-500">○ Disconnected</span>
@@ -208,6 +228,39 @@ export default function CodingSessionViewer({ session, onClose }: CodingSessionV
             )}
           </div>
         </div>
+
+        {/* Session Completed Banner */}
+        {status === 'completed' && testStats.total > 0 && testStats.failed === 0 && !isClosing && (
+          <div className="px-6 py-3 bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800">
+            <div className="flex items-center space-x-2 text-sm text-green-800 dark:text-green-300">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-medium">✅ All tests passed ({testStats.passed}/{testStats.total}) - Session completed successfully!</span>
+            </div>
+          </div>
+        )}
+        {status === 'completed' && testStats.total > 0 && testStats.failed > 0 && !isClosing && (
+          <div className="px-6 py-3 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
+            <div className="flex items-center space-x-2 text-sm text-yellow-800 dark:text-yellow-300">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="font-medium">⚠️ Session completed but {testStats.failed} test(s) failed ({testStats.passed}/{testStats.total} passed)</span>
+            </div>
+          </div>
+        )}
+        {isClosing && (
+          <div className="px-6 py-3 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-800">
+            <div className="flex items-center space-x-2 text-sm text-yellow-800 dark:text-yellow-300">
+              <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span className="font-medium">Session completed - Receiving final events before closing stream...</span>
+            </div>
+          </div>
+        )}
 
         {/* Progress Bars */}
         <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700 space-y-3">

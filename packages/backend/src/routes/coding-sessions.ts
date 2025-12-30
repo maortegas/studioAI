@@ -169,10 +169,13 @@ router.get('/stream/:sessionId', async (req: Request, res: Response) => {
 
   // Poll for new events every 1 second
   let lastEventTime = new Date();
+  let sessionEndedTime: Date | null = null;
+  let finalEventsSent = false;
+
   const pollInterval = setInterval(async () => {
     try {
       const events = await sessionService.getSessionEvents(sessionId, lastEventTime);
-      
+
       if (events.length > 0) {
         for (const event of events) {
           sendEvent({
@@ -180,7 +183,7 @@ router.get('/stream/:sessionId', async (req: Request, res: Response) => {
             payload: event.payload,
             timestamp: event.timestamp,
           });
-          
+
           // Update last event time
           if (event.timestamp > lastEventTime) {
             lastEventTime = event.timestamp;
@@ -191,13 +194,42 @@ router.get('/stream/:sessionId', async (req: Request, res: Response) => {
       // Check if session is completed or failed
       const session = await sessionService.getSession(sessionId);
       if (session && (session.status === 'completed' || session.status === 'failed')) {
-        sendEvent({
-          type: 'session_ended',
-          payload: { status: session.status },
-          timestamp: new Date(),
-        });
-        clearInterval(pollInterval);
-        res.end();
+        // Mark when session ended (only once)
+        if (!sessionEndedTime) {
+          sessionEndedTime = new Date();
+          console.log(`[SSE] Session ${sessionId} ended with status: ${session.status}. Will keep stream open for 5 more seconds to send remaining events.`);
+        }
+
+        // Calculate time elapsed since session ended
+        const elapsedSeconds = sessionEndedTime
+          ? (new Date().getTime() - sessionEndedTime.getTime()) / 1000
+          : 0;
+
+        // After 5 seconds, send final session_ended event and close
+        if (elapsedSeconds >= 5) {
+          if (!finalEventsSent) {
+            sendEvent({
+              type: 'session_ended',
+              payload: {
+                status: session.status,
+                message: 'All events have been sent. Closing stream.'
+              },
+              timestamp: new Date(),
+            });
+            finalEventsSent = true;
+            console.log(`[SSE] Sending final session_ended event for session ${sessionId}`);
+          }
+
+          // Give a small additional delay to ensure the final event is sent
+          setTimeout(() => {
+            clearInterval(pollInterval);
+            res.end();
+            console.log(`[SSE] Stream closed for session ${sessionId}`);
+          }, 500);
+        } else {
+          // Continue polling for events during the grace period
+          console.log(`[SSE] Session ${sessionId} completed. Continuing to poll for events (${Math.ceil(5 - elapsedSeconds)}s remaining)...`);
+        }
       }
     } catch (error) {
       console.error('Error polling events:', error);
