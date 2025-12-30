@@ -7,6 +7,7 @@ import { RFCRepository } from '../repositories/rfcRepository';
 import { EpicRepository } from '../repositories/epicRepository';
 import { UserFlowRepository } from '../repositories/userFlowRepository';
 import { readFile } from '../utils/fileSystem';
+import { scanProjectStructure, scanProjectStructureCompact, shouldUseCompactTree } from '../utils/fileTree';
 import path from 'path';
 
 export class AIService {
@@ -43,6 +44,41 @@ export class AIService {
       bundle.push(`**Tech Stack**: ${project.tech_stack}\n`);
     }
     bundle.push('\n');
+
+    // Add current project file structure (CRITICAL for correct imports)
+    if (project.base_path) {
+      try {
+        let fileTree = await scanProjectStructure(project.base_path, {
+          maxDepth: 3,
+          excludeDirs: ['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '.agentdb', '.tdd-checkpoints', 'backup-sessions']
+        });
+
+        // Use compact version if tree is too large
+        if (shouldUseCompactTree(fileTree)) {
+          console.log('[AIService] File tree too large, using compact version (directories only)');
+          fileTree = await scanProjectStructureCompact(project.base_path, { maxDepth: 4 });
+        }
+
+        bundle.push('## Current Project File Structure\n\n');
+        bundle.push('**CRITICAL**: This shows the ACTUAL files and directories that exist right now.\n\n');
+        bundle.push('```\n');
+        bundle.push(fileTree);
+        bundle.push('\n```\n\n');
+
+        bundle.push('**🚨 IMPORT RULES - READ CAREFULLY:**\n\n');
+        bundle.push('1. **ONLY import from files/directories shown above** (or npm packages in package.json)\n');
+        bundle.push('2. **Files that don\'t exist yet will be created during implementation** (this is TDD)\n');
+        bundle.push('3. **Use relative imports** based on your test file location\n');
+        bundle.push('4. **Assume MVC structure** will be created if not present:\n');
+        bundle.push('   - Services → `backend/src/services/`\n');
+        bundle.push('   - Repositories → `backend/src/repositories/`\n');
+        bundle.push('   - Controllers → `backend/src/controllers/`\n');
+        bundle.push('   - Models → `backend/src/models/`\n');
+        bundle.push('5. **DO NOT import from absolute paths** or paths outside the project\n\n');
+      } catch (error: any) {
+        console.warn('[AIService] Could not generate file tree:', error.message);
+      }
+    }
 
     // Add PRD (Idea del proyecto) - CRITICAL for architecture generation
     const prd = await this.artifactRepo.findByProjectIdAndType(projectId, 'prd');

@@ -22,6 +22,7 @@ import breakdownRouter from './routes/breakdown';
 import designRouter from './routes/design';
 import reviewRouter from './routes/review';
 import traceabilityRouter from './routes/traceability';
+import metricsRouter from './routes/metrics';
 import { validateProjectPath } from './middleware/validation';
 import { auditLog } from './middleware/audit';
 
@@ -59,6 +60,7 @@ app.use('/api/breakdown', breakdownRouter);
 app.use('/api/design', designRouter);
 app.use('/api/review', reviewRouter);
 app.use('/api/traceability', traceabilityRouter);
+app.use('/api/metrics', metricsRouter);
 
 // Health check
 app.get('/health', (req, res) => {

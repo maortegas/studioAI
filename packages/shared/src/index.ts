@@ -14,4 +14,5 @@ export * from './types/user-story';
 export * from './types/rfc';
 export * from './types/epic';
 export * from './types/design';
+export * from './types/retrySystem';
 

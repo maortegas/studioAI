@@ -606,15 +606,15 @@ export class CodingSessionService {
    * Build test generation prompt
    */
   private async buildTestGenerationPrompt(
-    story: any, 
-    programmerType: ProgrammerType, 
-    projectId: string, 
+    story: any,
+    programmerType: ProgrammerType,
+    projectId: string,
     unitTestsOnly: boolean = true,
     rfcExcerpt?: string
   ): Promise<string> {
     // Get full context from prompt bundle (includes PRD, RFC, Breakdown, Design, Stories)
     const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
-    
+
     const lines: string[] = [];
 
     lines.push(promptBundle);
@@ -622,7 +622,43 @@ export class CodingSessionService {
     lines.push(`# Test Generation Task: ${story.title}\n`);
     lines.push(`**Programmer Type**: ${programmerType}\n`);
     lines.push(`**Priority**: ${story.priority}\n\n`);
-    
+
+    // ============================================================
+    // 🚨 CRITICAL: OUTPUT FORMAT INSTRUCTIONS FIRST (HIGHEST PRIORITY)
+    // ============================================================
+    lines.push(`\n═══════════════════════════════════════════════════════════════\n`);
+    lines.push(`🚨🚨🚨 CRITICAL - OUTPUT FORMAT - READ THIS FIRST 🚨🚨🚨\n`);
+    lines.push(`═══════════════════════════════════════════════════════════════\n\n`);
+
+    lines.push(`**YOUR RESPONSE MUST FOLLOW THIS EXACT FORMAT:**\n\n`);
+
+    lines.push(`✅ **CORRECT FORMAT (Do this):**\n\n`);
+    lines.push(`\`\`\`typescript\n`);
+    lines.push(`import { myFunction } from '../src/services/myService';\n\n`);
+    lines.push(`describe('MyFunction', () => {\n`);
+    lines.push(`  it('should do something', () => {\n`);
+    lines.push(`    const result = myFunction('test');\n`);
+    lines.push(`    expect(result).toBe('expected');\n`);
+    lines.push(`  });\n`);
+    lines.push(`});\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`❌ **WRONG FORMAT (DO NOT do this):**\n\n`);
+    lines.push(`"I've generated unit tests that verify the JWT authentication logic..."\n`);
+    lines.push(`"The endpoint was already implemented according to the RFC..."\n`);
+    lines.push(`"Here's the test suite for the functionality..."\n\n`);
+
+    lines.push(`**RULES:**\n`);
+    lines.push(`1. Start IMMEDIATELY with a code block: \`\`\`typescript or \`\`\`javascript\n`);
+    lines.push(`2. Include ALL necessary imports at the top\n`);
+    lines.push(`3. Write complete, executable test code\n`);
+    lines.push(`4. End with the closing \`\`\`\n`);
+    lines.push(`5. DO NOT include ANY explanatory text outside code blocks\n`);
+    lines.push(`6. DO NOT write "I've generated..." or "Here's..."\n`);
+    lines.push(`7. If you include text outside code blocks, the tests will FAIL\n\n`);
+
+    lines.push(`═══════════════════════════════════════════════════════════════\n\n`);
+
     // Inject RFC Contract section if excerpt is provided
     if (rfcExcerpt) {
       lines.push(`## RFC Contract (Technical Specifications)\n\n`);
@@ -632,7 +668,7 @@ export class CodingSessionService {
       lines.push(rfcExcerpt);
       lines.push(`\n\`\`\`\n\n`);
     }
-    
+
     lines.push(`**🚨 CRITICAL - SCOPE LIMITATION - READ THIS CAREFULLY:**\n`);
     lines.push(`\n`);
     lines.push(`**YOU MUST GENERATE TESTS ONLY FOR THIS EXACT TASK:**\n`);
@@ -759,7 +795,38 @@ export class CodingSessionService {
       lines.push(`**IMPORTANT: Generate ONLY unit tests. Do NOT generate integration tests, E2E tests, or load tests.**\n\n`);
       lines.push(`Unit tests should test individual functions, methods, or components in isolation.\n\n`);
     }
-    
+
+    // Database infrastructure testing restriction
+    lines.push(`**🚨 CRITICAL - DATABASE INFRASTRUCTURE RESTRICTION:**\n`);
+    lines.push(`\n`);
+    lines.push(`**DO NOT generate tests for database infrastructure (these are NOT business logic):**\n`);
+    lines.push(`❌ Table creation or schema migrations\n`);
+    lines.push(`❌ Index creation or optimization\n`);
+    lines.push(`❌ View creation or materialized views\n`);
+    lines.push(`❌ Trigger creation or database procedures\n`);
+    lines.push(`❌ Database connection configuration\n`);
+    lines.push(`❌ Connection pool setup or management\n`);
+    lines.push(`❌ Database constraint creation (foreign keys, unique constraints, etc.)\n`);
+    lines.push(`\n`);
+    lines.push(`**ONLY generate tests for business logic that uses the database:**\n`);
+    lines.push(`✅ Data validations (e.g., "user email must be unique")\n`);
+    lines.push(`✅ Business rules (e.g., "user cannot have two active sessions")\n`);
+    lines.push(`✅ Data transformations and calculations\n`);
+    lines.push(`✅ Workflows and state transitions\n`);
+    lines.push(`✅ Authorization and permission checks\n`);
+    lines.push(`✅ Service/Repository integration (mocking database calls)\n`);
+    lines.push(`\n`);
+    lines.push(`**Example - WRONG (Infrastructure):**\n`);
+    lines.push(`❌ "Test that users table has email column"\n`);
+    lines.push(`❌ "Test that email_idx index exists"\n`);
+    lines.push(`❌ "Test database connection pool configuration"\n`);
+    lines.push(`\n`);
+    lines.push(`**Example - CORRECT (Business Logic):**\n`);
+    lines.push(`✅ "Test that createUser validates email format"\n`);
+    lines.push(`✅ "Test that createUser rejects duplicate emails"\n`);
+    lines.push(`✅ "Test that getUserById returns null for non-existent user"\n`);
+    lines.push(`\n`);
+
     if (programmerType === 'backend') {
       lines.push(`Generate ${unitTestsOnly ? 'UNIT ' : ''}tests for:`);
       lines.push(`- Individual functions and methods`);
@@ -791,66 +858,6 @@ export class CodingSessionService {
       }
     }
 
-    lines.push(`\n## Output Format\n`);
-    lines.push(`\n**🚨 CRITICAL - OUTPUT FORMAT:**\n`);
-    lines.push(`- Your response MUST contain ONLY executable test code inside markdown code blocks\n`);
-    lines.push(`- DO NOT include explanations, summaries, or narrative text\n`);
-    lines.push(`- DO NOT write "I've generated..." or "Here's the test suite..."\n`);
-    lines.push(`- Start IMMEDIATELY with a code block: \\\`\\\`\\\`javascript or \\\`\\\`\\\`typescript\n`);
-    lines.push(`- End with the closing \\\`\\\`\\\`\n`);
-    lines.push(`- If you include ANY text outside code blocks, the tests will FAIL to execute\n\n`);
-    lines.push(`**CORRECT Example:**\n`);
-    lines.push(`\\\`\\\`\\\`javascript\n`);
-    lines.push(`const { myFunction } = require('../src/services/myService');\n`);
-    lines.push(`describe('MyFunction', () => { ... });\n`);
-    lines.push(`\\\`\\\`\\\`\n\n`);
-    lines.push(`**WRONG Example (DO NOT DO THIS):**\n`);
-    lines.push(`I've generated a test suite for... [explanatory text] ❌\n\n`);
-    lines.push(`**Test Structure Requirements:**\n`);
-    lines.push(`Each test file MUST include:\n\n`);
-    lines.push(`1. **All necessary imports at the top:**\n`);
-    lines.push(`   - Test framework imports (Jest, Mocha, etc.)\n`);
-    lines.push(`   - Module/function under test\n`);
-    lines.push(`   - Any mocking libraries needed\n\n`);
-
-    if (programmerType === 'backend') {
-      lines.push(`   **Example for backend:**\n`);
-      lines.push(`   \`\`\`javascript\n`);
-      lines.push(`   // Import the function/class to test\n`);
-      lines.push(`   const { functionToTest } = require('../src/services/myService');\n`);
-      lines.push(`   // Or for TypeScript:\n`);
-      lines.push(`   // import { functionToTest } from '../src/services/myService';\n\n`);
-      lines.push(`   // Mock dependencies if needed\n`);
-      lines.push(`   jest.mock('../src/config/database');\n`);
-      lines.push(`   \`\`\`\n\n`);
-    } else if (programmerType === 'frontend') {
-      lines.push(`   **Example for frontend:**\n`);
-      lines.push(`   \`\`\`javascript\n`);
-      lines.push(`   import React from 'react';\n`);
-      lines.push(`   import { render, screen, fireEvent } from '@testing-library/react';\n`);
-      lines.push(`   import MyComponent from '../src/components/MyComponent';\n`);
-      lines.push(`   \`\`\`\n\n`);
-    }
-
-    lines.push(`2. **Test structure with describe/it blocks:**\n`);
-    lines.push(`   \`\`\`javascript\n`);
-    lines.push(`   describe('Feature Name', () => {\n`);
-    lines.push(`     it('should do something specific', () => {\n`);
-    lines.push(`       // Arrange\n`);
-    lines.push(`       const input = 'test';\n`);
-    lines.push(`       \n`);
-    lines.push(`       // Act\n`);
-    lines.push(`       const result = functionToTest(input);\n`);
-    lines.push(`       \n`);
-    lines.push(`       // Assert\n`);
-    lines.push(`       expect(result).toBe('expected value');\n`);
-    lines.push(`     });\n`);
-    lines.push(`   });\n`);
-    lines.push(`   \`\`\`\n\n`);
-
-    lines.push(`3. **Proper assertions using expect():**\n`);
-    lines.push(`   - Use specific matchers: .toBe(), .toEqual(), .toHaveBeenCalled(), etc.\n`);
-    lines.push(`   - Each test must have at least one assertion\n\n`);
     lines.push(`\n## Test Generation Guidelines\n`);
     lines.push(`Generate focused, runnable ${unitTestsOnly ? 'unit ' : ''}test suites that cover all acceptance criteria from the user story.\n`);
     lines.push(`**CRITICAL - TEST LIMITS:**\n`);

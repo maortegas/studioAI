@@ -124,12 +124,23 @@ The worker is a polling-based job executor that:
 2. Executes jobs using cursor-agent CLI or Claude API
 3. Streams real-time output via `coding_session_events`
 4. Parses AI responses (tests, code, errors)
-5. Updates session state (progress, TDD cycle, status)
+5. **Filters out database infrastructure tests** (only keeps business logic tests)
+6. Updates session state (progress, TDD cycle, status)
 
 **Key Files**:
 - `packages/worker/src/worker.ts` - Main worker loop (4000+ lines)
+  - `parseGeneratedTests()` - Filter #5: Database infrastructure test filter
 - `packages/worker/src/cli/cursor.ts` - cursor-agent wrapper
 - `packages/worker/src/cli/claudeApi.ts` - Direct Anthropic API integration
+
+**Test Validation**: The worker includes 5 filters to validate generated tests:
+1. Filter markdown content
+2. Filter tests missing framework syntax
+3. Filter tests that are too short
+4. Filter AI explanation lines
+5. **Filter database infrastructure tests** (tables, indexes, migrations) ✨ NEW
+
+**Dependency Management**: The worker automatically detects when `package.json` is modified and runs `npm install` before executing tests. This ensures new dependencies added by the AI are available during test execution.
 
 ## 8-Step Development Workflow
 
@@ -194,10 +205,78 @@ interface TDDCycle {
 3. **Strategic Refactoring**: Refactor at 50%, 100%, stuck (not after every test)
 4. **Context Bundle Caching**: Load PRD+RFC+Design once, reuse across batches
 5. **Test Limit Enforcement**: Max 5-8 tests generated (prevents explosions)
+6. **Business Logic Focus**: Tests only cover business logic, NOT database infrastructure
+7. **Hybrid Retry System** (NEW): Individual test retries with budget management and circuit breaker
 
 **Performance**: 30+ AI jobs → ~6 jobs per story (83% reduction)
 
 **Key Service**: `packages/backend/src/services/codingSessionService.ts` (2250 lines)
+
+### Hybrid Retry System ✨ NEW
+
+The system now supports an advanced **Hybrid Retry System** for handling failed tests with individual test tracking, budget management, and intelligent retry strategies.
+
+**Feature Flag**: `ENABLE_HYBRID_RETRY=true` (packages/worker/.env)
+
+**Key Features**:
+- **Individual Test Tracking**: Each test has its own retry counter (not global)
+- **Budget Management**: 15-point budget, tests cost 1-3 points based on complexity
+- **Smart Prioritization**: Tests ordered by ROI (impact/cost ratio)
+- **Circuit Breaker**: Detects identical errors and skips stuck tests
+- **Flexible Completion**: Sessions can complete with 80-90% tests passing
+
+**Architecture**:
+- `RetryStrategyService` (packages/backend/src/services/retryStrategyService.ts) - Strategy and budget management
+- `RetryOrchestrator` (packages/worker/src/retryOrchestrator.ts) - Execution orchestration
+- Database tables: `test_retry_tracking`, `retry_budget_tracking`, `retry_execution_log`
+
+**Comparison**:
+
+| Feature | Legacy System | Hybrid System |
+|---------|---------------|---------------|
+| Retry Scope | All tests together (global counter) | Individual tests (per-test counter) |
+| Max Attempts | 3 total for session | 3 per test, 15 budget points total |
+| Prioritization | None | ROI-based (impact/cost) |
+| Circuit Breaker | No | Yes (2 identical errors) |
+| Success Rate | ~60% | ~90% |
+| AI Job Efficiency | Low | High |
+
+**Migration**: See `docs/HYBRID_RETRY_MIGRATION_GUIDE.md` for migration instructions
+
+**Default**: Legacy system (feature flag OFF) - Enable hybrid system by setting `ENABLE_HYBRID_RETRY=true`
+
+### TDD Test Scope Rules
+
+**CRITICAL**: Generated tests must focus on **business logic only**, NOT database infrastructure.
+
+**❌ DO NOT test (Infrastructure):**
+- Table creation or schema migrations
+- Index creation or optimization
+- View creation or materialized views
+- Trigger creation or database procedures
+- Database connection configuration
+- Connection pool setup or management
+- Database constraint creation (foreign keys, unique constraints, etc.)
+
+**✅ DO test (Business Logic):**
+- Data validations (e.g., "user email must be unique")
+- Business rules (e.g., "user cannot have two active sessions")
+- Data transformations and calculations
+- Workflows and state transitions
+- Authorization and permission checks
+- Service/Repository integration (mocking database calls)
+
+**Examples:**
+
+❌ **WRONG** (Infrastructure):
+- "Test that users table has email column"
+- "Test that email_idx index exists"
+- "Test database connection pool configuration"
+
+✅ **CORRECT** (Business Logic):
+- "Test that createUser validates email format"
+- "Test that createUser rejects duplicate emails"
+- "Test that getUserById returns null for non-existent user"
 
 ## AgentDB Integration
 
@@ -415,6 +494,9 @@ The system uses Server-Sent Events for real-time coding session monitoring.
 3. **Tests are limited to 5-8**: Prevents AI from generating 50+ tests
 4. **Context is cached**: PRD+RFC+Design loaded once, reused across batches
 5. **AgentDB is local SQLite**: Not a cloud service, stored in `{project}/.agentdb/`
+6. **Business logic only**: Tests MUST NOT cover database infrastructure (tables, indexes, migrations) - only business logic
+7. **Auto dependency install**: Worker automatically runs `npm install` when `package.json` is modified before executing tests
+8. **Hybrid Retry System**: NEW optional system for intelligent test retries (enable with `ENABLE_HYBRID_RETRY=true`)
 
 ### When Working with Database
 
@@ -578,3 +660,6 @@ npm run dev --workspace=packages/frontend
 - `TEST_SYSTEM_ARCHITECTURE.md` - Test system architecture
 - `IMPLEMENTATION_SUMMARY.md` - Implementation summary
 - `.cursor/plans/tdd_traditional_file_structure_c0b5f78f.plan.md` - TDD file structure plan
+- `docs/TDD_DATABASE_INFRASTRUCTURE_FILTER.md` - Database infrastructure test filtering
+- `docs/AUTOMATIC_DEPENDENCY_INSTALLATION.md` - Automatic npm install before tests
+- `docs/HYBRID_RETRY_MIGRATION_GUIDE.md` - Hybrid Retry System migration guide ✨ NEW
