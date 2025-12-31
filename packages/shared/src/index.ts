@@ -16,3 +16,6 @@ export * from './types/epic';
 export * from './types/design';
 export * from './types/retrySystem';
 
+// Utils
+export { JestConfigGenerator } from './utils/jestConfigGenerator';
+
