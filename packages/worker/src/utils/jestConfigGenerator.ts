@@ -2,13 +2,71 @@ import fs from 'fs/promises';
 import path from 'path';
 
 /**
- * Generates Jest configuration files for ES6 module support
+ * Generates Jest configuration files with TypeScript or JavaScript support
  */
 export class JestConfigGenerator {
   /**
-   * Creates jest.config.js with ES6 module support
+   * Creates jest.config.js for TypeScript projects with ts-jest
    */
-  static generateJestConfig(): string {
+  static generateTypeScriptJestConfig(): string {
+    return `export default {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+
+  // Module name mapper for clean imports
+  moduleNameMapper: {
+    '^(\\\\.{1,2}/.*)\\\\.js$': '$1',
+  },
+
+  // Transform configuration for TypeScript
+  transform: {
+    '^.+\\\\.tsx?$': ['ts-jest', {
+      useESM: true,
+    }],
+  },
+
+  // Test file patterns
+  testMatch: [
+    '**/tests/**/*.test.ts',
+    '**/tests/**/*.test.tsx',
+    '**/tests/**/*.spec.ts',
+    '**/__tests__/**/*.ts',
+    '**/__tests__/**/*.tsx',
+  ],
+
+  // Coverage configuration
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    'src/**/*.tsx',
+    '!src/**/*.test.ts',
+    '!src/**/*.spec.ts',
+    '!src/**/*.d.ts',
+  ],
+
+  // Ignore patterns
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/dist/',
+    '/build/',
+    '/.tdd-checkpoints/',
+  ],
+
+  // Clear mocks between tests
+  clearMocks: true,
+
+  // Verbose output
+  verbose: true,
+
+  // ES modules support
+  extensionsToTreatAsEsm: ['.ts', '.tsx'],
+};
+`;
+  }
+
+  /**
+   * Creates jest.config.js for JavaScript projects with babel-jest
+   */
+  static generateJavaScriptJestConfig(): string {
     return `export default {
   testEnvironment: 'node',
 
@@ -19,7 +77,7 @@ export class JestConfigGenerator {
 
   // Transform configuration
   transform: {
-    // Use default Jest transformer for .js files
+    // Use babel-jest for .js files
     '^.+\\\\.js$': ['babel-jest', { configFile: './babel.config.json' }],
   },
 
@@ -42,6 +100,7 @@ export class JestConfigGenerator {
     '/node_modules/',
     '/dist/',
     '/build/',
+    '/.tdd-checkpoints/',
   ],
 
   // Clear mocks between tests
@@ -54,7 +113,7 @@ export class JestConfigGenerator {
   }
 
   /**
-   * Creates babel.config.json for Jest transformation
+   * Creates babel.config.json for JavaScript projects
    */
   static generateBabelConfig(): string {
     return `{
@@ -70,6 +129,34 @@ export class JestConfigGenerator {
   ]
 }
 `;
+  }
+
+  /**
+   * Checks if project uses TypeScript
+   */
+  static async isTypeScriptProject(projectPath: string): Promise<boolean> {
+    try {
+      // Check 1: Look for tsconfig.json
+      const tsconfigPath = path.join(projectPath, 'tsconfig.json');
+      try {
+        await fs.access(tsconfigPath);
+        return true;
+      } catch {
+        // tsconfig.json doesn't exist, check package.json
+      }
+
+      // Check 2: Look for typescript in dependencies
+      const packageJsonPath = path.join(projectPath, 'package.json');
+      const content = await fs.readFile(packageJsonPath, 'utf-8');
+      const packageJson = JSON.parse(content);
+
+      const deps = packageJson.dependencies || {};
+      const devDeps = packageJson.devDependencies || {};
+
+      return 'typescript' in deps || 'typescript' in devDeps;
+    } catch (error) {
+      return false;
+    }
   }
 
   /**
@@ -89,7 +176,11 @@ export class JestConfigGenerator {
   /**
    * Checks if Jest dependencies are present in package.json
    */
-  static async hasJestDependencies(projectPath: string): Promise<{ hasJest: boolean; hasBabel: boolean }> {
+  static async hasJestDependencies(projectPath: string): Promise<{
+    hasJest: boolean;
+    hasTsJest: boolean;
+    hasBabel: boolean
+  }> {
     try {
       const packageJsonPath = path.join(projectPath, 'package.json');
       const content = await fs.readFile(packageJsonPath, 'utf-8');
@@ -97,16 +188,40 @@ export class JestConfigGenerator {
 
       const devDeps = packageJson.devDependencies || {};
       const hasJest = 'jest' in devDeps;
+      const hasTsJest = 'ts-jest' in devDeps;
       const hasBabel = '@babel/core' in devDeps && '@babel/preset-env' in devDeps && 'babel-jest' in devDeps;
 
-      return { hasJest, hasBabel };
+      return { hasJest, hasTsJest, hasBabel };
     } catch (error) {
-      return { hasJest: false, hasBabel: false };
+      return { hasJest: false, hasTsJest: false, hasBabel: false };
     }
   }
 
   /**
-   * Adds Babel dependencies to package.json
+   * Adds TypeScript Jest dependencies to package.json
+   */
+  static async addTypeScriptJestDependencies(projectPath: string): Promise<void> {
+    const packageJsonPath = path.join(projectPath, 'package.json');
+    const content = await fs.readFile(packageJsonPath, 'utf-8');
+    const packageJson = JSON.parse(content);
+
+    if (!packageJson.devDependencies) {
+      packageJson.devDependencies = {};
+    }
+
+    // Add ts-jest and @types/jest if not present
+    if (!packageJson.devDependencies['ts-jest']) {
+      packageJson.devDependencies['ts-jest'] = '^29.1.1';
+    }
+    if (!packageJson.devDependencies['@types/jest']) {
+      packageJson.devDependencies['@types/jest'] = '^29.5.11';
+    }
+
+    await fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n', 'utf-8');
+  }
+
+  /**
+   * Adds JavaScript Babel dependencies to package.json
    */
   static async addBabelDependencies(projectPath: string): Promise<void> {
     const packageJsonPath = path.join(projectPath, 'package.json');
@@ -133,10 +248,10 @@ export class JestConfigGenerator {
 
   /**
    * Auto-configures Jest for ES6 modules in a project
-   * Creates jest.config.js, babel.config.json, and adds dependencies
+   * Detects TypeScript and configures accordingly
    */
   static async autoConfigureJest(projectPath: string): Promise<{ configured: boolean; reason: string }> {
-    console.log(`[JestConfigGenerator] Checking if project needs Jest ES6 configuration: ${projectPath}`);
+    console.log(`[JestConfigGenerator] Checking if project needs Jest configuration: ${projectPath}`);
 
     // Check if it's an ES module project
     const isESModule = await this.isESModuleProject(projectPath);
@@ -157,33 +272,52 @@ export class JestConfigGenerator {
     }
 
     // Check dependencies
-    const { hasJest, hasBabel } = await this.hasJestDependencies(projectPath);
+    const { hasJest, hasTsJest, hasBabel } = await this.hasJestDependencies(projectPath);
 
     if (!hasJest) {
       console.log(`[JestConfigGenerator] ⚠️ No Jest dependency found in package.json`);
       return { configured: false, reason: 'No Jest dependency in package.json' };
     }
 
-    console.log(`[JestConfigGenerator] Creating Jest configuration files...`);
+    // Detect if TypeScript project
+    const isTypeScript = await this.isTypeScriptProject(projectPath);
 
-    // Create jest.config.js
-    const jestConfig = this.generateJestConfig();
-    await fs.writeFile(jestConfigPath, jestConfig, 'utf-8');
-    console.log(`[JestConfigGenerator] ✅ Created jest.config.js`);
+    if (isTypeScript) {
+      console.log(`[JestConfigGenerator] 🔷 Detected TypeScript project, configuring ts-jest...`);
 
-    // Create babel.config.json
-    const babelConfigPath = path.join(projectPath, 'babel.config.json');
-    const babelConfig = this.generateBabelConfig();
-    await fs.writeFile(babelConfigPath, babelConfig, 'utf-8');
-    console.log(`[JestConfigGenerator] ✅ Created babel.config.json`);
+      // Create TypeScript jest.config.js
+      const jestConfig = this.generateTypeScriptJestConfig();
+      await fs.writeFile(jestConfigPath, jestConfig, 'utf-8');
+      console.log(`[JestConfigGenerator] ✅ Created jest.config.js for TypeScript`);
 
-    // Add Babel dependencies if not present
-    if (!hasBabel) {
-      await this.addBabelDependencies(projectPath);
-      console.log(`[JestConfigGenerator] ✅ Added Babel dependencies to package.json`);
-      console.log(`[JestConfigGenerator] ⚠️ Run 'npm install' to install new dependencies`);
+      // Add ts-jest dependencies if not present
+      if (!hasTsJest) {
+        await this.addTypeScriptJestDependencies(projectPath);
+        console.log(`[JestConfigGenerator] ✅ Added TypeScript Jest dependencies to package.json`);
+      }
+
+      return { configured: true, reason: 'Jest configured for TypeScript with ts-jest' };
+    } else {
+      console.log(`[JestConfigGenerator] 📦 Detected JavaScript project, configuring babel-jest...`);
+
+      // Create JavaScript jest.config.js
+      const jestConfig = this.generateJavaScriptJestConfig();
+      await fs.writeFile(jestConfigPath, jestConfig, 'utf-8');
+      console.log(`[JestConfigGenerator] ✅ Created jest.config.js for JavaScript`);
+
+      // Create babel.config.json
+      const babelConfigPath = path.join(projectPath, 'babel.config.json');
+      const babelConfig = this.generateBabelConfig();
+      await fs.writeFile(babelConfigPath, babelConfig, 'utf-8');
+      console.log(`[JestConfigGenerator] ✅ Created babel.config.json`);
+
+      // Add Babel dependencies if not present
+      if (!hasBabel) {
+        await this.addBabelDependencies(projectPath);
+        console.log(`[JestConfigGenerator] ✅ Added Babel dependencies to package.json`);
+      }
+
+      return { configured: true, reason: 'Jest configured for JavaScript with babel-jest' };
     }
-
-    return { configured: true, reason: 'Jest configured for ES6 modules' };
   }
 }

@@ -4790,16 +4790,16 @@ async function executeTestSuitesForSession(codingSessionId: string, includeFaile
     const project = projectResult.rows[0];
     const techStack = (project.tech_stack || 'nodejs').toLowerCase();
 
-    // Auto-configure Jest for ES6 modules if needed
+    // Auto-configure Jest for TypeScript/JavaScript ES modules if needed
     try {
       const { JestConfigGenerator } = await import('./utils/jestConfigGenerator');
       const result = await JestConfigGenerator.autoConfigureJest(project.base_path);
       if (result.configured) {
-        console.log(`[Worker] ✅ Auto-configured Jest for ES6: ${result.reason}`);
+        console.log(`[Worker] ✅ Auto-configured Jest: ${result.reason}`);
 
-        // Run npm install if Babel dependencies were added
-        if (result.reason.includes('Babel dependencies')) {
-          console.log(`[Worker] Running npm install to install Babel dependencies...`);
+        // Run npm install if dependencies were added (TypeScript or Babel)
+        if (result.reason.includes('TypeScript') || result.reason.includes('babel-jest')) {
+          console.log(`[Worker] Running npm install to install dependencies...`);
           await ensureDependenciesInstalled(project.base_path);
         }
       } else {
