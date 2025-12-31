@@ -4789,7 +4789,26 @@ async function executeTestSuitesForSession(codingSessionId: string, includeFaile
     
     const project = projectResult.rows[0];
     const techStack = (project.tech_stack || 'nodejs').toLowerCase();
-    
+
+    // Auto-configure Jest for ES6 modules if needed
+    try {
+      const { JestConfigGenerator } = await import('./utils/jestConfigGenerator');
+      const result = await JestConfigGenerator.autoConfigureJest(project.base_path);
+      if (result.configured) {
+        console.log(`[Worker] ✅ Auto-configured Jest for ES6: ${result.reason}`);
+
+        // Run npm install if Babel dependencies were added
+        if (result.reason.includes('Babel dependencies')) {
+          console.log(`[Worker] Running npm install to install Babel dependencies...`);
+          await ensureDependenciesInstalled(project.base_path);
+        }
+      } else {
+        console.log(`[Worker] Jest auto-config skipped: ${result.reason}`);
+      }
+    } catch (error: any) {
+      console.warn(`[Worker] Could not auto-configure Jest: ${error.message}`);
+    }
+
     // Execute each test suite
     for (const suite of suitesResult.rows) {
       try {
