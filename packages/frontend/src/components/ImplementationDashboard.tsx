@@ -4,6 +4,7 @@ import { codingSessionsApi } from '../api/codingSessions';
 import { tasksApi } from '../api/tasks';
 import { useToast } from '../context/ToastContext';
 import CodingSessionViewer from './CodingSessionViewer';
+import RetryWithInstructionsModal from './RetryWithInstructionsModal';
 
 interface ImplementationDashboardProps {
   projectId: string;
@@ -18,6 +19,8 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
   const [viewingSession, setViewingSession] = useState<CodingSession | null>(null);
   const [testStrategy, setTestStrategy] = useState<TestStrategy>('tdd');
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [retryModalOpen, setRetryModalOpen] = useState(false);
+  const [selectedSessionForRetry, setSelectedSessionForRetry] = useState<CodingSession | null>(null);
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -136,12 +139,41 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
 
   const handleRetrySession = async (sessionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
+
+    // Find the session to check if it has errors
+    const session = dashboard?.sessions.find(s => s.id === sessionId);
+
+    // If session has errors, show instructions modal
+    if (session && session.status === 'failed' && session.error) {
+      setSelectedSessionForRetry(session);
+      setRetryModalOpen(true);
+      return;
+    }
+
+    // Otherwise, simple retry without instructions
     try {
       const result = await codingSessionsApi.retrySession(sessionId);
       showToast(result.message, 'success');
       await loadDashboard();
     } catch (error: any) {
       showToast(error.response?.data?.error || 'Failed to retry session', 'error');
+    }
+  };
+
+  const handleRetryWithInstructions = async (instructions: string) => {
+    if (!selectedSessionForRetry) return;
+
+    try {
+      const result = await codingSessionsApi.retrySessionWithInstructions(
+        selectedSessionForRetry.id,
+        instructions
+      );
+      showToast(result.message, 'success');
+      setRetryModalOpen(false);
+      setSelectedSessionForRetry(null);
+      await loadDashboard();
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || 'Failed to retry session');
     }
   };
 
@@ -664,6 +696,19 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
         <CodingSessionViewer
           session={viewingSession}
           onClose={() => setViewingSession(null)}
+        />
+      )}
+
+      {/* Retry with Instructions Modal */}
+      {retryModalOpen && selectedSessionForRetry && (
+        <RetryWithInstructionsModal
+          sessionId={selectedSessionForRetry.id}
+          testError={selectedSessionForRetry.error || 'Unknown error'}
+          onClose={() => {
+            setRetryModalOpen(false);
+            setSelectedSessionForRetry(null);
+          }}
+          onSubmit={handleRetryWithInstructions}
         />
       )}
     </div>

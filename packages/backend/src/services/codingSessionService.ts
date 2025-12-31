@@ -499,6 +499,157 @@ export class CodingSessionService {
   }
 
   /**
+   * Retry a failed coding session with custom user instructions
+   */
+  async retrySessionWithInstructions(sessionId: string, userInstructions: string): Promise<any> {
+    console.log(`[CodingSessionService] Retrying session ${sessionId} with custom instructions`);
+
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    // Get session details
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Coding session not found');
+    }
+
+    // Get test failures
+    const testSuites = await pool.query(
+      'SELECT id, name, error FROM test_suites WHERE coding_session_id = $1 AND status = \'failed\'',
+      [sessionId]
+    );
+
+    if (testSuites.rows.length === 0) {
+      throw new Error('No failed tests found for this session');
+    }
+
+    // Get test execution errors
+    const testExecutions = await pool.query(
+      `SELECT error_message, output FROM test_executions
+       WHERE test_suite_id IN (
+         SELECT id FROM test_suites WHERE coding_session_id = $1 AND status = 'failed'
+       )
+       ORDER BY completed_at DESC LIMIT 1`,
+      [sessionId]
+    );
+
+    const errorDetails = testExecutions.rows[0]?.error_message ||
+                        testExecutions.rows[0]?.output ||
+                        'Unknown error';
+
+    // Store user instructions in coding_session_events for context
+    await pool.query(
+      `INSERT INTO coding_session_events (session_id, event_type, payload)
+       VALUES ($1, $2, $3)`,
+      [
+        sessionId,
+        'user_instructions',
+        JSON.stringify({
+          instructions: userInstructions,
+          timestamp: new Date().toISOString(),
+          error_context: errorDetails.substring(0, 500) // First 500 chars of error
+        })
+      ]
+    );
+
+    // Reset session status to allow retry
+    await pool.query(
+      `UPDATE coding_sessions
+       SET status = $1, error = NULL
+       WHERE id = $2`,
+      ['pending', sessionId]
+    );
+
+    // Reset test suites to ready
+    await pool.query(
+      `UPDATE test_suites
+       SET status = 'ready', error = NULL
+       WHERE coding_session_id = $1 AND status = 'failed'`,
+      [sessionId]
+    );
+
+    // Get story for building prompt
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) {
+      throw new Error('Story not found');
+    }
+
+    // Build prompt with user instructions
+    const retryPrompt = await this.buildRetryPromptWithInstructions(
+      session.project_id,
+      story,
+      errorDetails,
+      userInstructions
+    );
+
+    // Create AI job for retry
+    const job = await this.aiService.createAIJob({
+      project_id: session.project_id,
+      coding_session_id: sessionId,
+      phase: 'tdd_green',
+      prompt: retryPrompt,
+      mode: 'code'
+    });
+
+    console.log(`[CodingSessionService] Created retry job ${job.id} with user instructions`);
+
+    return {
+      message: 'Retry started with your custom instructions',
+      job_id: job.id,
+      session_id: sessionId
+    };
+  }
+
+  /**
+   * Build retry prompt that includes user instructions
+   */
+  private async buildRetryPromptWithInstructions(
+    projectId: string,
+    story: any,
+    errorDetails: string,
+    userInstructions: string
+  ): Promise<string> {
+    const lines: string[] = [];
+
+    // Get context bundle
+    const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
+    lines.push(promptBundle);
+    lines.push('\n---\n');
+
+    lines.push(`# 🔧 RETRY WITH USER INSTRUCTIONS\n\n`);
+
+    lines.push(`## ⚠️ CRITICAL: USER PROVIDED SPECIFIC INSTRUCTIONS\n\n`);
+    lines.push(`**The user has analyzed the test failure and provided these SPECIFIC INSTRUCTIONS:**\n\n`);
+    lines.push(`\`\`\`\n`);
+    lines.push(userInstructions);
+    lines.push(`\n\`\`\`\n\n`);
+
+    lines.push(`**YOU MUST FOLLOW THESE INSTRUCTIONS EXACTLY.**\n\n`);
+    lines.push(`The user knows the codebase and has identified the specific issue. `);
+    lines.push(`Do NOT ignore their guidance.\n\n`);
+
+    lines.push(`## Test Failure Details\n\n`);
+    lines.push(`The previous implementation attempt failed with this error:\n\n`);
+    lines.push(`\`\`\`\n`);
+    lines.push(errorDetails);
+    lines.push(`\n\`\`\`\n\n`);
+
+    lines.push(`## Your Task\n\n`);
+    lines.push(`1. **READ the user instructions carefully** (they know what went wrong)\n`);
+    lines.push(`2. **APPLY their specific guidance** to fix the issue\n`);
+    lines.push(`3. **IMPLEMENT the fix** following their directions\n`);
+    lines.push(`4. **VERIFY** that your changes address their concerns\n\n`);
+
+    lines.push(`## Important Notes\n\n`);
+    lines.push(`- The user's instructions are HIGHER PRIORITY than general best practices\n`);
+    lines.push(`- If there's a conflict between user instructions and PRD/RFC, FOLLOW USER INSTRUCTIONS\n`);
+    lines.push(`- The user is trying to help you avoid repeating the same mistake\n`);
+    lines.push(`- Be grateful for their help and implement exactly what they suggest\n\n`);
+
+    return lines.join('\n');
+  }
+
+  /**
    * Load context from previous sessions for the same story/epic using AgentDB
    */
   private async loadPreviousSessionContext(projectId: string, storyId: string, currentSessionId?: string): Promise<string> {

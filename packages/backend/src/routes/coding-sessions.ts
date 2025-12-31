@@ -137,6 +137,24 @@ router.post('/:sessionId/retry', async (req: Request, res: Response) => {
   }
 });
 
+// Retry a failed session with custom user instructions
+router.post('/:sessionId/retry-with-instructions', async (req: Request, res: Response) => {
+  try {
+    const { sessionId } = req.params;
+    const { instructions } = req.body;
+
+    if (!instructions || !instructions.trim()) {
+      return res.status(400).json({ error: 'Instructions are required' });
+    }
+
+    const result = await sessionService.retrySessionWithInstructions(sessionId, instructions);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error retrying session with instructions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Start review process for a completed session
 router.post('/:sessionId/review', async (req: Request, res: Response) => {
   try {

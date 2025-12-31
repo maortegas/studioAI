@@ -52,6 +52,11 @@ export const codingSessionsApi = {
     return response.data;
   },
 
+  retrySessionWithInstructions: async (sessionId: string, instructions: string): Promise<{ message: string; job_id: string; session_id: string }> => {
+    const response = await apiClient.post(`/coding-sessions/${sessionId}/retry-with-instructions`, { instructions });
+    return response.data;
+  },
+
   startReview: async (sessionId: string): Promise<{ review_job_id: string; message: string }> => {
     const response = await apiClient.post(`/coding-sessions/${sessionId}/review`);
     return response.data;
