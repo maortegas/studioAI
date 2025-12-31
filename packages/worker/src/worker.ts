@@ -11,6 +11,8 @@ import { analyzeJestErrors, parseJestSummary } from './utils/jestErrorAnalyzer';
 import { performPreTestHealthCheck, formatHealthCheckReport } from './utils/healthCheck';
 import { formatError, formatErrorForLogging, ErrorContext } from './utils/errorFormatter';
 import { detectTransientError, executeWithRetry } from './utils/transientErrorDetector';
+import { DependencyVerificationService } from './utils/dependencyVerification';
+import { TestFileCleanupService } from './utils/testFileCleanup';
 import express from 'express';
 
 const pool = new Pool({
@@ -1074,6 +1076,53 @@ async function processJob(jobId: string) {
                     test_code: row.test_code,
                     error_message: row.error || 'Unknown error'
                   }));
+
+                  // INFRASTRUCTURE ERROR DETECTION: Check if failures are due to infrastructure issues
+                  console.log(`[Worker] 🔍 Analyzing test failures for infrastructure errors...`);
+
+                  // Get error output from test executions
+                  const errorOutputResult = await pool.query(
+                    `SELECT error_message, output FROM test_executions
+                     WHERE test_suite_id IN (
+                       SELECT id FROM test_suites WHERE coding_session_id = $1 AND status = 'failed'
+                     )
+                     ORDER BY completed_at DESC LIMIT 1`,
+                    [codingSessionId]
+                  );
+
+                  let infrastructureError = { isInfrastructure: false };
+                  if (errorOutputResult.rows.length > 0) {
+                    const errorOutput = errorOutputResult.rows[0].error_message || errorOutputResult.rows[0].output || '';
+                    infrastructureError = DependencyVerificationService.detectInfrastructureError(errorOutput);
+
+                    if (infrastructureError.isInfrastructure) {
+                      console.error(`[Worker] 🚨 Infrastructure error detected: ${infrastructureError.type}`);
+                      console.error(`[Worker] 💡 Suggestion: ${infrastructureError.suggestion}`);
+
+                      await pool.query(
+                        'UPDATE coding_sessions SET status = $1, error = $2 WHERE id = $3',
+                        [
+                          'failed',
+                          `Infrastructure error (${infrastructureError.type}): ${infrastructureError.suggestion}`,
+                          codingSessionId
+                        ]
+                      );
+
+                      await pool.query(
+                        'INSERT INTO coding_session_events (session_id, event_type, payload) VALUES ($1, $2, $3)',
+                        [codingSessionId, 'error', JSON.stringify({
+                          message: 'Infrastructure error detected - retry will not help',
+                          error_type: infrastructureError.type,
+                          suggestion: infrastructureError.suggestion,
+                          action_required: 'fix_infrastructure'
+                        })]
+                      );
+
+                      return; // Exit early - infrastructure errors need manual intervention
+                    }
+                  }
+
+                  console.log(`[Worker] ✅ No infrastructure errors detected, proceeding with retry system`);
 
                   // Use hybrid or legacy system based on feature flag
                   if (ENABLE_HYBRID_RETRY_SYSTEM) {
@@ -4855,6 +4904,37 @@ async function executeTestSuitesForSession(codingSessionId: string, includeFaile
         const projectPath = project.base_path;
         const startTime = Date.now();
 
+        // VERIFICATION CHECKPOINT: Verify dependencies (Prisma, package.json, node_modules)
+        console.log(`[Worker] Running dependency verification for project: ${projectPath}`);
+        const verificationResult = await DependencyVerificationService.verifyProjectDependencies(projectPath);
+
+        if (!verificationResult.success) {
+          const errorMsg = `Dependency verification failed: ${verificationResult.errors.join(', ')}`;
+          console.error(`[Worker] ✗ ${errorMsg}`);
+
+          await pool.query(
+            `UPDATE test_executions
+             SET status = $1, completed_at = $2, duration = $3, output = $4, error = $5
+             WHERE id = $6`,
+            ['failed', new Date(), Date.now() - startTime, '', errorMsg, executionId]
+          );
+
+          await pool.query(
+            'UPDATE test_suites SET status = $1, error = $2 WHERE id = $3',
+            ['failed', errorMsg, suite.id]
+          );
+
+          continue; // Skip to next test suite
+        }
+
+        if (verificationResult.actions.length > 0) {
+          console.log(`[Worker] ✅ Actions performed: ${verificationResult.actions.join(', ')}`);
+        }
+
+        if (verificationResult.warnings.length > 0) {
+          console.warn(`[Worker] ⚠️ Warnings: ${verificationResult.warnings.join(', ')}`);
+        }
+
         // VALIDATION CHECKPOINT: Verify test file exists
         const testFilePath = path.join(projectPath, suite.file_path);
         try {
@@ -4879,7 +4959,7 @@ async function executeTestSuitesForSession(codingSessionId: string, includeFaile
           continue; // Skip to next test suite
         }
 
-        // VALIDATION CHECKPOINT: Verify package.json exists
+        // Continue with test file validation
         const packageJsonPath = path.join(projectPath, 'package.json');
         let hasJest = false;
         try {
@@ -4896,7 +4976,7 @@ async function executeTestSuitesForSession(codingSessionId: string, includeFaile
           console.warn(`[Worker] ⚠ Could not verify package.json: ${error.message}`);
         }
 
-        // VALIDATION CHECKPOINT: Verify node_modules exists
+        // Verification already handled above
         const nodeModulesPath = path.join(projectPath, 'node_modules');
         try {
           await fs.access(nodeModulesPath);
@@ -6544,6 +6624,39 @@ const ENABLE_HYBRID_RETRY_SYSTEM = process.env.ENABLE_HYBRID_RETRY === 'true';
  */
 async function handleFailedTestsHybrid(codingSessionId: string, failedTests: Array<{ id: string; name: string; error_message?: string; test_code?: string }>): Promise<void> {
   console.log(`[Worker] 🔄 Using Hybrid Retry System for ${failedTests.length} failed tests`);
+
+  // Clean test files before retry
+  try {
+    const projectResult = await pool.query(
+      'SELECT base_path FROM projects WHERE id = (SELECT project_id FROM coding_sessions WHERE id = $1)',
+      [codingSessionId]
+    );
+    const projectPath = projectResult.rows[0]?.base_path;
+
+    if (projectPath) {
+      console.log(`[Worker] 🧹 Cleaning problematic test files before retry...`);
+
+      // Get file paths of failed test suites
+      const testFilePathsResult = await pool.query(
+        'SELECT file_path FROM test_suites WHERE coding_session_id = $1 AND status = \'failed\'',
+        [codingSessionId]
+      );
+
+      const testFilePaths = testFilePathsResult.rows.map((row: any) => row.file_path);
+
+      // Clean test files (create backup but don't remove - let AI fix them)
+      const cleanupResult = await TestFileCleanupService.cleanTestFilesForSession(
+        projectPath,
+        testFilePaths,
+        { createBackup: true, removeFile: false }
+      );
+
+      console.log(`[Worker] 🧹 Cleanup complete: ${cleanupResult.cleaned} files cleaned, ${cleanupResult.issues} files had issues`);
+    }
+  } catch (cleanupError: any) {
+    console.warn(`[Worker] ⚠️ Error during test file cleanup: ${cleanupError.message}`);
+    // Continue with retry even if cleanup fails
+  }
 
   const { RetryStrategyService } = await import('../../backend/src/services/retryStrategyService');
   const { RetryOrchestrator } = await import('./retryOrchestrator');

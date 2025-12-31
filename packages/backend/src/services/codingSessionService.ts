@@ -693,6 +693,71 @@ export class CodingSessionService {
     lines.push(`- The system will save your response as a SINGLE .test.js file\n`);
     lines.push(`- Concatenating multiple files breaks Jest execution\n\n`);
 
+    lines.push(`🚨 **CRITICAL - NO DUPLICATE TEST SUITES:**\n\n`);
+    lines.push(`**YOU MUST GENERATE EXACTLY ONE (1) DESCRIBE BLOCK - DO NOT CREATE MULTIPLE SUITES FOR THE SAME FUNCTIONALITY**\n\n`);
+
+    lines.push(`❌ **WRONG - DUPLICATE SUITES (DO NOT DO THIS):**\n`);
+    lines.push(`\`\`\`typescript\n`);
+    lines.push(`import { EmployeeService } from '../../src/services/employeeService';\n`);
+    lines.push(`import { prisma } from '../../src/config/database';\n\n`);
+    lines.push(`// Mock configuration\n`);
+    lines.push(`jest.mock('../../src/config/database', () => ({ prisma: mockPrisma }));\n\n`);
+    lines.push(`// FIRST SUITE - Unit tests with mocks\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => {\n`);
+    lines.push(`  it('should update employee', () => { ... });\n`);
+    lines.push(`});\n\n`);
+    lines.push(`// ❌ SECOND SUITE - Integration tests with real DB - FORBIDDEN!\n`);
+    lines.push(`const prisma = new PrismaClient(); // ❌ CONFLICTS WITH MOCK ABOVE!\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => { // ❌ DUPLICATE SUITE!\n`);
+    lines.push(`  it('should update employee in database', () => { ... });\n`);
+    lines.push(`});\n\n`);
+    lines.push(`// ❌ THIRD SUITE - Another approach - FORBIDDEN!\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => { // ❌ DUPLICATE SUITE!\n`);
+    lines.push(`  it('should validate input', () => { ... });\n`);
+    lines.push(`});\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`✅ **CORRECT - ONE SUITE WITH ALL TESTS (DO THIS):**\n`);
+    lines.push(`\`\`\`typescript\n`);
+    lines.push(`import { EmployeeService } from '../../src/services/employeeService';\n\n`);
+    lines.push(`// Single mock configuration at the top\n`);
+    lines.push(`const mockFindUnique = jest.fn();\n`);
+    lines.push(`const mockUpdate = jest.fn();\n\n`);
+    lines.push(`jest.mock('../../src/config/database', () => ({\n`);
+    lines.push(`  prisma: {\n`);
+    lines.push(`    employee: {\n`);
+    lines.push(`      findUnique: mockFindUnique,\n`);
+    lines.push(`      update: mockUpdate,\n`);
+    lines.push(`    },\n`);
+    lines.push(`  },\n`);
+    lines.push(`}));\n\n`);
+    lines.push(`// ONE SUITE with all tests\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => {\n`);
+    lines.push(`  beforeEach(() => {\n`);
+    lines.push(`    jest.clearAllMocks();\n`);
+    lines.push(`  });\n\n`);
+    lines.push(`  it('should successfully update employee with valid data', () => { ... });\n`);
+    lines.push(`  it('should throw error if employee not found', () => { ... });\n`);
+    lines.push(`  it('should validate input data with Zod schema', () => { ... });\n`);
+    lines.push(`  it('should handle database errors', () => { ... });\n`);
+    lines.push(`});\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`**WHY MULTIPLE SUITES CAUSE PROBLEMS:**\n`);
+    lines.push(`- Jest mock hoisting conflicts: Cannot access variables before initialization ❌\n`);
+    lines.push(`- Duplicate describe() blocks confuse Jest test runner\n`);
+    lines.push(`- Mixing mocks with real instances creates unpredictable behavior\n`);
+    lines.push(`- Tests become difficult to maintain and debug\n`);
+    lines.push(`- One suite with multiple it() blocks = Clean, predictable tests ✅\n\n`);
+
+    lines.push(`**MOCKING BEST PRACTICES:**\n`);
+    lines.push(`1. Create mock functions BEFORE jest.mock() call\n`);
+    lines.push(`2. Use jest.mock() at the top level (not inside describe)\n`);
+    lines.push(`3. Import services/modules AFTER jest.mock() declarations\n`);
+    lines.push(`4. Use a single describe() block for all related tests\n`);
+    lines.push(`5. Clear mocks in beforeEach() to ensure test isolation\n`);
+    lines.push(`6. For unit tests: Use mocks. For integration tests: Use real DB (but pick ONE approach)\n\n`);
+
     lines.push(`═══════════════════════════════════════════════════════════════\n\n`);
 
     // Inject RFC Contract section if excerpt is provided
