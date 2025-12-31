@@ -515,7 +515,7 @@ export class CodingSessionService {
 
     // Get test failures
     const testSuites = await pool.query(
-      'SELECT id, name, error FROM test_suites WHERE coding_session_id = $1 AND status = \'failed\'',
+      'SELECT id, name FROM test_suites WHERE coding_session_id = $1 AND status = \'failed\'',
       [sessionId]
     );
 
@@ -563,7 +563,7 @@ export class CodingSessionService {
     // Reset test suites to ready
     await pool.query(
       `UPDATE test_suites
-       SET status = 'ready', error = NULL
+       SET status = 'ready'
        WHERE coding_session_id = $1 AND status = 'failed'`,
       [sessionId]
     );
