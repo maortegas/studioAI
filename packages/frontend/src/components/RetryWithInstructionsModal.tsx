@@ -8,7 +8,6 @@ interface RetryWithInstructionsModalProps {
 }
 
 export default function RetryWithInstructionsModal({
-  sessionId,
   testError,
   onClose,
   onSubmit

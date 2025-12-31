@@ -585,10 +585,12 @@ export class CodingSessionService {
     // Create AI job for retry
     const job = await this.aiService.createAIJob({
       project_id: session.project_id,
+      provider: 'cursor',
+      mode: 'patch',
+      prompt: retryPrompt,
+    }, {
       coding_session_id: sessionId,
       phase: 'tdd_green',
-      prompt: retryPrompt,
-      mode: 'code'
     });
 
     console.log(`[CodingSessionService] Created retry job ${job.id} with user instructions`);
