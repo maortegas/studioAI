@@ -708,7 +708,18 @@ async function processJob(jobId: string) {
     if (result.success || (result.output && result.output.length > 0 && !result.error)) {
       await jobRepo.updateStatus(jobId, 'completed', undefined, new Date());
       await jobRepo.addEvent(jobId, 'completed', { output: result.output });
-      
+
+      // 🔍 DEBUG: Log all relevant variables for root cause investigation
+      console.log(`[Worker] 🔍 DEBUG Job completed: jobId=${jobId}`);
+      console.log(`[Worker] 🔍 DEBUG phase=${phase}`);
+      console.log(`[Worker] 🔍 DEBUG mode=${mode}`);
+      console.log(`[Worker] 🔍 DEBUG codingSessionId=${codingSessionId}`);
+      console.log(`[Worker] 🔍 DEBUG isCodingSession=${isCodingSession}`);
+      console.log(`[Worker] 🔍 DEBUG isTestGeneration=${isTestGeneration}`);
+      console.log(`[Worker] 🔍 DEBUG isIndividualRetry=${isIndividualRetry}`);
+      console.log(`[Worker] 🔍 DEBUG isImplementation=${isImplementation}`);
+      console.log(`[Worker] 🔍 DEBUG isTDDPhase=${isTDDPhase}`);
+
       // Handle coding session completion based on phase
       if (isTestGeneration) {
         // Test generation completed
@@ -1922,8 +1933,13 @@ async function processJob(jobId: string) {
             ['failed', `TDD ${phase} failed: ${error}`, codingSessionId]
           );
         }
+      } else {
+        // 🔍 DEBUG: No handler matched for this job
+        console.warn(`[Worker] ⚠️ No handler for completed job!`);
+        console.warn(`[Worker] ⚠️ Details: phase=${phase}, mode=${mode}, codingSessionId=${codingSessionId}`);
+        console.warn(`[Worker] ⚠️ Flags: isTestGeneration=${isTestGeneration}, isIndividualRetry=${isIndividualRetry}, isImplementation=${isImplementation}, isTDDPhase=${isTDDPhase}`);
       }
-      
+
       // Note: Architecture is saved manually by the user after reviewing the generated content
       // Auto-save removed to prevent duplicate files and allow user review before saving
       

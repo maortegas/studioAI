@@ -29,6 +29,10 @@ Sessions using **retry-with-instructions** were getting stuck in `"pending"` (wa
 
 ## 🔍 Root Cause Analysis
 
+**Full Investigation**: See `ROOT_CAUSE_INVESTIGATION.md` for detailed analysis
+
+**Summary**: Mode mismatch - retry-with-instructions creates jobs with `mode: 'patch'`, but worker handler requires `mode: 'agent'`
+
 ### Code Investigation
 
 The worker has specific handlers for different job types when they complete (line ~708):
