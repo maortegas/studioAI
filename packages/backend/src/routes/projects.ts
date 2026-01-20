@@ -1,9 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { ProjectService } from '../services/projectService';
 import { CreateProjectRequest } from '@devflow-studio/shared';
+import databaseRouter from './database';
 
 const router = Router();
 const projectService = new ProjectService();
+
+// Mount database routes under /:id/database
+router.use('/:id/database', databaseRouter);
 
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -29,7 +33,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const data: CreateProjectRequest = req.body;
-    
+
     if (!data.name || !data.base_path) {
       return res.status(400).json({ error: 'Name and base_path are required' });
     }
@@ -66,4 +70,3 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 export default router;
-
