@@ -2,15 +2,19 @@ import { ProjectRepository } from '../repositories/projectRepository';
 import { CreateProjectRequest, Project } from '@devflow-studio/shared';
 import { ensureDirectory, createFile, validatePath } from '../utils/fileSystem';
 import { ProjectStructureService } from './projectStructureService';
+import { DatabaseService } from './databaseService';
 import path from 'path';
+import fs from 'fs/promises';
 
 export class ProjectService {
   private projectRepo: ProjectRepository;
   private structureService: ProjectStructureService;
+  private databaseService: DatabaseService;
 
   constructor() {
     this.projectRepo = new ProjectRepository();
     this.structureService = new ProjectStructureService();
+    this.databaseService = new DatabaseService();
   }
 
   async getAllProjects(): Promise<Project[]> {
@@ -31,9 +35,16 @@ export class ProjectService {
     // Create project directory
     await ensureDirectory(data.base_path);
 
-    // Create MVC directory structure (includes package.json, Jest config, TypeScript config, and dependency installation)
+    // Create MVC directory structure
     console.log(`[ProjectService] Creating MVC structure for tech stack: ${data.tech_stack}`);
     await this.structureService.createProjectStructure(data.base_path, data.tech_stack);
+
+    // Check if project uses Prisma and generate database infrastructure
+    const hasPrisma = await this.checkIfProjectUsesPrisma(data.base_path);
+    if (hasPrisma) {
+      console.log(`[ProjectService] Prisma detected, generating database infrastructure...`);
+      await this.databaseService.generateDatabaseInfrastructure(data.base_path, data.name);
+    }
 
     // Create initial files
     const prdPath = path.join(data.base_path, 'docs', 'PRD.md');
@@ -111,7 +122,8 @@ This file provides context for Claude AI assistance.
     await createFile(claudePath, claudeTemplate);
 
     // Create project in database
-    return await this.projectRepo.create(data);
+    const project = await this.projectRepo.create(data);
+    return project;
   }
 
   async updateProject(id: string, data: Partial<CreateProjectRequest>): Promise<Project | null> {
@@ -121,5 +133,28 @@ This file provides context for Claude AI assistance.
   async deleteProject(id: string): Promise<boolean> {
     return await this.projectRepo.delete(id);
   }
-}
 
+  /**
+   * Verifica si el proyecto usa Prisma
+   */
+  private async checkIfProjectUsesPrisma(basePath: string): Promise<boolean> {
+    const schemaPath = path.join(basePath, 'prisma', 'schema.prisma');
+    const packageJsonPath = path.join(basePath, 'package.json');
+
+    try {
+      // Verificar schema.prisma
+      await fs.access(schemaPath);
+      return true;
+    } catch {
+      // Schema no existe, verificar package.json
+      try {
+        const packageJsonContent = await fs.readFile(packageJsonPath, 'utf-8');
+        const packageJson = JSON.parse(packageJsonContent);
+        const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+        return 'prisma' in deps || '@prisma/client' in deps;
+      } catch {
+        return false;
+      }
+    }
+  }
+}

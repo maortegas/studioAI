@@ -21,10 +21,27 @@ export default function ProjectForm({ onSuccess, onCancel }: ProjectFormProps) {
     setLoading(true);
     setError(null);
 
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectForm.tsx:19',message:'ProjectForm submit started',data:{formData},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectForm.tsx:25',message:'Calling projectsApi.create',data:{formData},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
       await projectsApi.create(formData);
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectForm.tsx:26',message:'Project created successfully',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
       onSuccess();
     } catch (err: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/5b170222-ee7f-4866-b070-82670b1c690b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProjectForm.tsx:28',message:'Project creation failed',data:{error:err?.message,responseStatus:err?.response?.status,responseData:err?.response?.data,stack:err?.stack},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
       setError(err.response?.data?.error || 'Failed to create project');
     } finally {
       setLoading(false);
