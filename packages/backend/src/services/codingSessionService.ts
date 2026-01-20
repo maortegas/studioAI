@@ -85,6 +85,9 @@ export class CodingSessionService {
       programmer_type: data.programmer_type,
     });
 
+    // Initialize AgentDB for all test strategies
+    await this.initializeAgentDB(session.id, data.story_id, data.project_id);
+
     const { Pool } = await import('pg');
     const pool = (await import('../config/database')).default;
     const testStrategy = data.test_strategy || 'tdd';
@@ -157,7 +160,7 @@ export class CodingSessionService {
       );
     } else if (testStrategy === 'after') {
       // 'after': Skip test generation, start implementation directly, generate tests after
-      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined);
+      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined, session.id);
       const implJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -182,7 +185,7 @@ export class CodingSessionService {
       );
     } else {
       // 'none': Skip test generation entirely, start implementation directly, no tests after
-      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined);
+      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined, session.id);
       const implJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -440,6 +443,52 @@ export class CodingSessionService {
   }
 
   /**
+   * Reset a session to initial state
+   * Clears all progress, errors, and job references
+   */
+  async resetSession(sessionId: string): Promise<CodingSession> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    // Reset session to initial state
+    // Use direct SQL query to set fields to NULL
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+    
+    await pool.query(
+      `UPDATE coding_sessions SET
+        status = $1,
+        progress = $2,
+        test_progress = $3,
+        implementation_progress = $4,
+        current_file = NULL,
+        output = NULL,
+        error = NULL,
+        ai_job_id = NULL,
+        test_generation_job_id = NULL,
+        implementation_job_id = NULL,
+        started_at = NULL,
+        completed_at = NULL
+       WHERE id = $5`,
+      ['pending', 0, 0, 0, sessionId]
+    );
+
+    // Add event
+    await this.sessionRepo.addEvent(sessionId, 'progress', {
+      message: 'Session reset to initial state by user',
+    });
+
+    const updatedSession = await this.sessionRepo.findById(sessionId);
+    if (!updatedSession) {
+      throw new Error('Failed to retrieve updated session');
+    }
+
+    return updatedSession;
+  }
+
+  /**
    * Delete/Cancel a session
    */
   async deleteSession(sessionId: string): Promise<void> {
@@ -513,29 +562,83 @@ export class CodingSessionService {
       throw new Error('Coding session not found');
     }
 
-    // Get test failures
-    const testSuites = await pool.query(
+    // Get test failures - try multiple strategies
+    // Strategy 1: Look for test_suites with status 'failed'
+    let testSuites = await pool.query(
       'SELECT id, name FROM test_suites WHERE coding_session_id = $1 AND status = \'failed\'',
       [sessionId]
     );
 
+    // Strategy 2: If no failed test_suites, look for failed test_executions
     if (testSuites.rows.length === 0) {
-      throw new Error('No failed tests found for this session');
+      console.log(`[CodingSessionService] No failed test_suites found, checking test_executions...`);
+      const failedExecutions = await pool.query(
+        `SELECT te.error_message, te.output, te.status, ts.id as suite_id, ts.name as suite_name
+         FROM test_executions te
+         JOIN test_suites ts ON te.test_suite_id = ts.id
+         WHERE ts.coding_session_id = $1 AND te.status = 'failed'
+         ORDER BY te.completed_at DESC LIMIT 1`,
+        [sessionId]
+      );
+
+      if (failedExecutions.rows.length > 0) {
+        console.log(`[CodingSessionService] Found ${failedExecutions.rows.length} failed test_executions`);
+        // Update the test_suite status to 'failed' for consistency
+        await pool.query(
+          'UPDATE test_suites SET status = $1 WHERE id = $2',
+          ['failed', failedExecutions.rows[0].suite_id]
+        );
+        testSuites = { rows: [{ id: failedExecutions.rows[0].suite_id, name: failedExecutions.rows[0].suite_name }] };
+      }
     }
 
-    // Get test execution errors
-    const testExecutions = await pool.query(
-      `SELECT error_message, output FROM test_executions
-       WHERE test_suite_id IN (
-         SELECT id FROM test_suites WHERE coding_session_id = $1 AND status = 'failed'
-       )
-       ORDER BY completed_at DESC LIMIT 1`,
-      [sessionId]
-    );
+    // Strategy 3: If still no failures, check for any test_executions with errors
+    let errorDetails = 'Unknown error';
+    if (testSuites.rows.length > 0) {
+      const testExecutions = await pool.query(
+        `SELECT error_message, output FROM test_executions
+         WHERE test_suite_id IN (
+           SELECT id FROM test_suites WHERE coding_session_id = $1 AND status = 'failed'
+         )
+         ORDER BY completed_at DESC LIMIT 1`,
+        [sessionId]
+      );
 
-    const errorDetails = testExecutions.rows[0]?.error_message ||
-                        testExecutions.rows[0]?.output ||
-                        'Unknown error';
+      errorDetails = testExecutions.rows[0]?.error_message ||
+                    testExecutions.rows[0]?.output ||
+                    'Unknown error';
+    } else {
+      // Strategy 4: Check for any errors in the session itself or recent test_executions
+      console.log(`[CodingSessionService] No failed tests found, checking session error and recent executions...`);
+      
+      // Check session error
+      if (session.error) {
+        errorDetails = session.error;
+        console.log(`[CodingSessionService] Using session error: ${errorDetails.substring(0, 100)}`);
+      } else {
+        // Check for any test_executions with errors (even if status is not 'failed')
+        const anyExecutions = await pool.query(
+          `SELECT te.error_message, te.output, te.status
+           FROM test_executions te
+           JOIN test_suites ts ON te.test_suite_id = ts.id
+           WHERE ts.coding_session_id = $1 
+             AND (te.error_message IS NOT NULL OR te.status = 'error')
+           ORDER BY te.completed_at DESC LIMIT 1`,
+          [sessionId]
+        );
+
+        if (anyExecutions.rows.length > 0) {
+          errorDetails = anyExecutions.rows[0]?.error_message ||
+                        anyExecutions.rows[0]?.output ||
+                        'Test execution had errors';
+          console.log(`[CodingSessionService] Found execution with errors: ${errorDetails.substring(0, 100)}`);
+        } else {
+          // No errors found, but allow retry with user instructions anyway
+          errorDetails = 'No specific errors found. Retrying with user instructions.';
+          console.log(`[CodingSessionService] No errors found, allowing retry with user instructions only`);
+        }
+      }
+    }
 
     // Store user instructions in coding_session_events for context
     await pool.query(
@@ -560,13 +663,23 @@ export class CodingSessionService {
       ['pending', sessionId]
     );
 
-    // Reset test suites to ready
-    await pool.query(
-      `UPDATE test_suites
-       SET status = 'ready'
-       WHERE coding_session_id = $1 AND status = 'failed'`,
-      [sessionId]
-    );
+    // Reset test suites to ready (if any were failed)
+    if (testSuites.rows.length > 0) {
+      await pool.query(
+        `UPDATE test_suites
+         SET status = 'ready'
+         WHERE coding_session_id = $1 AND status = 'failed'`,
+        [sessionId]
+      );
+    } else {
+      // If no failed test_suites, reset any test_suites that are not 'passed' to 'ready'
+      await pool.query(
+        `UPDATE test_suites
+         SET status = 'ready'
+         WHERE coding_session_id = $1 AND status != 'passed'`,
+        [sessionId]
+      );
+    }
 
     // Get story for building prompt
     const story = await this.taskRepo.findById(session.story_id);
@@ -1130,8 +1243,30 @@ export class CodingSessionService {
   /**
    * Build implementation prompt (alias for buildCodingPrompt)
    */
-  private async buildImplementationPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string): Promise<string> {
-    return this.buildCodingPrompt(story, programmerType, projectId, testsOutput);
+  private async buildImplementationPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string, sessionId?: string): Promise<string> {
+    return this.buildCodingPrompt(story, programmerType, projectId, testsOutput, sessionId);
+  }
+
+  /**
+   * Initialize AgentDB and store traceability chain for any test strategy
+   * This is a lightweight initialization that doesn't require tests
+   */
+  private async initializeAgentDB(sessionId: string, storyId: string, projectId: string): Promise<void> {
+    try {
+      const project = await this.projectRepo.findById(projectId);
+      if (!project) {
+        throw new Error('Project not found');
+      }
+
+      // Store traceability chain in AgentDB
+      const { AgentDBTraceabilityStore } = await import('./agentdb/AgentDBTraceabilityStore');
+      const traceabilityStore = new AgentDBTraceabilityStore(project.base_path, sessionId);
+      await traceabilityStore.storeTraceabilityChain(storyId);
+      console.log(`[CodingSessionService] ✅ Stored traceability chain in AgentDB for session ${sessionId}`);
+    } catch (error) {
+      console.warn(`[CodingSessionService] Could not initialize AgentDB for session ${sessionId}:`, error);
+      // Don't throw - AgentDB is optional, continue without it
+    }
   }
 
   /**
@@ -1407,9 +1542,72 @@ export class CodingSessionService {
       lines.push(`\n`);
     }
 
+    // Obtener sección RFC por código si existe
+    let rfcExcerpt: string | null = null;
+    if ((story as any).rfc_section_code || (story as any).rfc_section_identifier) {
+      const sectionCode = (story as any).rfc_section_code || (story as any).rfc_section_identifier;
+      
+      if (sectionCode) {
+        try {
+          const { RFCSectionCodeService } = await import('./rfcSectionCodeService');
+          const rfcCodeService = new RFCSectionCodeService();
+          
+          // Obtener epic para encontrar rfc_id
+          if ((story as any).epic_id) {
+            const { EpicRepository } = await import('../repositories/epicRepository');
+            const epicRepo = new EpicRepository();
+            const epic = await epicRepo.findById((story as any).epic_id);
+            
+            if (epic && epic.rfc_id) {
+              const section = await rfcCodeService.getSectionByCode(epic.rfc_id, sectionCode);
+              if (section) {
+                rfcExcerpt = section.content;
+                
+                // Validar que el contenido no haya cambiado (comparar hash si existe)
+                if ((story as any).rfc_section_hash) {
+                  const crypto = await import('crypto');
+                  const currentHash = crypto.createHash('sha256').update(rfcExcerpt).digest('hex');
+                  if (currentHash !== (story as any).rfc_section_hash) {
+                    console.warn(`[CodingSessionService] RFC section hash mismatch for task ${story.id} - RFC may have changed`);
+                  }
+                }
+              } else {
+                // Fallback: usar referencia guardada si el código no existe
+                rfcExcerpt = (story as any).rfc_section_reference || null;
+              }
+            }
+          }
+        } catch (error) {
+          console.warn(`[CodingSessionService] Could not load RFC section by code:`, error);
+          // Fallback: usar referencia guardada
+          rfcExcerpt = (story as any).rfc_section_reference || null;
+        }
+      }
+    } else if ((story as any).rfc_section_reference) {
+      // Si no hay código pero hay referencia guardada, usarla
+      rfcExcerpt = (story as any).rfc_section_reference;
+    }
+    
+    // Inyectar sección RFC explícita si existe
+    if (rfcExcerpt) {
+      lines.push(`\n## ⚠️ CRITICAL: RFC Technical Specifications (Section: ${(story as any).rfc_section_code || (story as any).rfc_section_identifier || 'N/A'})\n\n`);
+      lines.push(`**This RFC section was EXPLICITLY identified for this task during breakdown.**\n`);
+      lines.push(`**Section Code**: ${(story as any).rfc_section_code || (story as any).rfc_section_identifier || 'N/A'}\n`);
+      lines.push(`**You MUST follow these specifications EXACTLY. Do NOT deviate, invent, or modify.**\n`);
+      lines.push(`**Any deviation from these specifications is an error.**\n\n`);
+      lines.push(`\`\`\`\n`);
+      lines.push(rfcExcerpt);
+      lines.push(`\n\`\`\`\n\n`);
+      lines.push(`**Validation**: After implementation, verify your code matches these specifications exactly.\n\n`);
+    }
+    
     lines.push(`## Instructions\n`);
     lines.push(`**IMPORTANT - Reference Context Above:**\n`);
-    lines.push(`- Follow the RFC (Technical Design) for architecture, API contracts, and database schema\n`);
+    if (rfcExcerpt) {
+      lines.push(`- **CRITICAL**: Follow the RFC Technical Specifications section above EXACTLY (do not deviate)\n`);
+    } else {
+      lines.push(`- Follow the RFC (Technical Design) for architecture, API contracts, and database schema\n`);
+    }
     lines.push(`- Respect User Flows & Design for UI/UX implementation\n`);
     lines.push(`- Follow the Breakdown specifications and dependencies\n`);
     lines.push(`- Ensure alignment with all User Stories and their acceptance criteria\n`);
@@ -1463,6 +1661,16 @@ export class CodingSessionService {
       }
       lines.push(`\nWrite clean, maintainable, and well-documented code that aligns with all context provided above.`);
     }
+
+    // Add explicit restrictions on documentation file generation
+    lines.push(`\n**CRITICAL - DO NOT GENERATE DOCUMENTATION FILES:**\n`);
+    lines.push(`❌ DO NOT create README.md, QUICK_START.md, IMPLEMENTATION_SUMMARY.md, INTEGRATION_DIAGRAM.md, or any other documentation files\n`);
+    lines.push(`❌ DO NOT generate usage guides, API documentation files, integration guides, or setup instructions\n`);
+    lines.push(`❌ DO NOT create any markdown files in shared/, backend/, frontend/, or any other directories\n`);
+    lines.push(`✅ ONLY implement the actual code files required for the task (TypeScript/JavaScript files)\n`);
+    lines.push(`✅ Code comments within source files are acceptable and encouraged\n`);
+    lines.push(`✅ Inline documentation in code (JSDoc comments) is acceptable\n`);
+    lines.push(`✅ Focus on implementing functional code, not documentation files\n`);
 
     // Add previous context if available
     if (previousContext) {
@@ -1570,11 +1778,12 @@ export class CodingSessionService {
     // 1. Load context bundle ONCE
     const contextBundle = await this.aiService.buildPromptBundle(session.project_id, story.id);
 
-    // 2. Store full traceability chain in AgentDB
+    // 2. Reuse generic AgentDB initialization (already called in createSession, but ensure it's done)
+    await this.initializeAgentDB(sessionId, story.id, session.project_id);
+
+    // Create traceabilityStore instance for executeAllAtOnceTDD
     const { AgentDBTraceabilityStore } = await import('./agentdb/AgentDBTraceabilityStore');
     const traceabilityStore = new AgentDBTraceabilityStore(project.base_path, sessionId);
-    await traceabilityStore.storeTraceabilityChain(story.id);
-    console.log(`[TDD] ✅ Stored traceability chain in AgentDB`);
 
     // 3. Initialize Context Manager (now uses AgentDB)
     const contextManager = new TDDContextManager(project.base_path, sessionId);

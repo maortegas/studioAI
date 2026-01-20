@@ -13,13 +13,15 @@ export class ProjectRepository {
   }
 
   async create(data: CreateProjectRequest): Promise<Project> {
+    try {
     const result = await pool.query(
       `INSERT INTO projects (name, base_path, tech_stack)
        VALUES ($1, $2, $3)
        RETURNING *`,
       [data.name, data.base_path, data.tech_stack || null]
-    );
-    return result.rows[0];
+    );    return result.rows[0];
+    } catch (error: any) {      throw error;
+    }
   }
 
   async update(id: string, data: UpdateProjectRequest): Promise<Project | null> {

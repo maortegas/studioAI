@@ -20,6 +20,15 @@ export interface Task {
   breakdown_order?: number;
   story_points?: number;
   generated_from_prd?: boolean;
+  // Nuevos campos de trazabilidad explícita
+  story_section_reference?: string;
+  design_section_reference?: string;
+  rfc_section_reference?: string;
+  rfc_section_identifier?: string;  // Código: RFC-SEC-001
+  rfc_section_code?: string;        // Alias
+  rfc_section_hash?: string;
+  references_validated_at?: Date;
+  references_validation_status?: 'valid' | 'invalid' | 'changed' | 'pending';
 }
 
 export interface CreateTaskRequest {

@@ -147,4 +147,59 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
   }
 });
 
+// Get all sections with codes for an RFC
+router.get('/:id/sections', async (req: Request, res: Response) => {
+  try {
+    const { RFCSectionCodeService } = await import('../services/rfcSectionCodeService');
+    const rfcCodeService = new RFCSectionCodeService();
+    const sections = await rfcCodeService.getRFCSections(req.params.id);
+    res.json(sections);
+  } catch (error: any) {
+    console.error('Error fetching RFC sections:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get specific section by code
+router.get('/:id/sections/:code', async (req: Request, res: Response) => {
+  try {
+    const { RFCSectionCodeService } = await import('../services/rfcSectionCodeService');
+    const rfcCodeService = new RFCSectionCodeService();
+    const section = await rfcCodeService.getSectionByCode(req.params.id, req.params.code);
+    if (!section) {
+      return res.status(404).json({ error: 'Section not found' });
+    }
+    res.json(section);
+  } catch (error: any) {
+    console.error('Error fetching RFC section:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get RFC section coverage (which tasks cover which sections)
+router.get('/:id/coverage', async (req: Request, res: Response) => {
+  try {
+    const pool = await import('../config/database');
+    const result = await pool.default.query(
+      `SELECT 
+         rsc.section_code,
+         rsc.section_header,
+         rsc.section_level,
+         COUNT(t.id) as task_count,
+         array_agg(t.id) FILTER (WHERE t.id IS NOT NULL) as task_ids,
+         array_agg(t.title) FILTER (WHERE t.title IS NOT NULL) as task_titles
+       FROM rfc_section_codes rsc
+       LEFT JOIN tasks t ON t.rfc_section_code = rsc.section_code
+       WHERE rsc.rfc_id = $1
+       GROUP BY rsc.section_code, rsc.section_header, rsc.section_level, rsc.section_order
+       ORDER BY rsc.section_order`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    console.error('Error fetching RFC coverage:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

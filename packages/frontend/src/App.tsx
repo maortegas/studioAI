@@ -7,6 +7,7 @@ import ProjectList from './pages/ProjectList';
 import ProjectDetail from './pages/ProjectDetail';
 
 function App() {
+  console.log('App component rendered');
   return (
     <ThemeProvider>
     <ToastProvider>
@@ -24,6 +25,7 @@ function App() {
           </Routes>
         </Layout>
       </Router>
+
     </ToastProvider>
     </ThemeProvider>
   );

@@ -235,6 +235,23 @@ export class AgentDBContextManager {
   }
 
   /**
+   * Get recent decisions from AgentDB
+   */
+  async getRecentDecisions(limit: number = 10): Promise<Array<{ action: string; reason: string; code_snippet?: string; timestamp: string }>> {
+    const instance = await this.ensureInstance();
+    
+    const decisions = await this.agentdbService.executeQuery(
+      instance,
+      `SELECT action, reason, code_snippet, timestamp FROM decisions 
+       WHERE session_id = ? 
+       ORDER BY timestamp DESC LIMIT ?`,
+      [this.sessionId, limit]
+    );
+    
+    return decisions || [];
+  }
+
+  /**
    * Close connection
    */
   async close(): Promise<void> {

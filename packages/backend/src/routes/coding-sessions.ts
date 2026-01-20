@@ -155,6 +155,18 @@ router.post('/:sessionId/retry-with-instructions', async (req: Request, res: Res
   }
 });
 
+// Reset a session to initial state
+router.post('/:sessionId/reset', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const session = await sessionService.resetSession(sessionId);
+    res.json({ session, message: 'Session reset to initial state successfully' });
+  } catch (error: any) {
+    console.error('Error resetting session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Start review process for a completed session
 router.post('/:sessionId/review', async (req: Request, res: Response) => {
   try {

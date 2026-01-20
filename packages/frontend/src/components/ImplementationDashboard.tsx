@@ -123,6 +123,20 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
     }
   };
 
+  const handleResetSession = async (sessionId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!confirm('Are you sure you want to reset this session to initial state? All progress will be lost.')) {
+      return;
+    }
+    try {
+      await codingSessionsApi.resetSession(sessionId);
+      showToast('Session reset to initial state', 'success');
+      await loadDashboard();
+    } catch (error: any) {
+      showToast(error.response?.data?.error || 'Failed to reset session', 'error');
+    }
+  };
+
   const handleDeleteSession = async (sessionId: string, event: React.MouseEvent) => {
     event.stopPropagation();
     if (!confirm('Are you sure you want to cancel/delete this session?')) {
@@ -407,6 +421,19 @@ export default function ImplementationDashboard({ projectId }: ImplementationDas
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
                             <span>Retry</span>
+                          </button>
+                        )}
+                        {/* Reset button - show for all sessions except pending */}
+                        {session.status !== 'pending' && (
+                          <button
+                            onClick={(e) => handleResetSession(session.id, e)}
+                            className="flex items-center space-x-1 px-3 py-2 text-sm bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-900/50 rounded-lg transition border border-orange-300 dark:border-orange-600"
+                            title="Reset session to initial state"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            <span>Reset</span>
                           </button>
                         )}
                         {/* Cancel/Delete button - show for all non-completed sessions, or for recently completed */}
