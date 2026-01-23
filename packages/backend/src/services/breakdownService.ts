@@ -106,6 +106,18 @@ export class BreakdownService {
     // Get full context using buildPromptBundle (includes PRD, Architecture, RFC, Stories, Design)
     const promptBundle = await this.aiService.buildPromptBundle(project.id);
     
+    // Obtener códigos de secciones RFC para incluir en el prompt
+    let rfcSectionCodes: Array<{ code: string; header: string }> = [];
+    if (rfc?.id) {
+      try {
+        const { RFCSectionCodeService } = await import('./rfcSectionCodeService');
+        const rfcCodeService = new RFCSectionCodeService();
+        rfcSectionCodes = await rfcCodeService.getRFCSections(rfc.id);
+      } catch (error) {
+        console.warn('[BreakdownService] Could not load RFC section codes:', error);
+      }
+    }
+    
     lines.push('# Generate Breakdown: Épicas and Granular Tasks from User Stories + RFC');
     lines.push('');
     lines.push('The context below includes:');
@@ -220,6 +232,70 @@ export class BreakdownService {
     lines.push('5. **Dependency identification**: Clearly identify and list all blocking dependencies for each task');
     lines.push('');
 
+    // Agregar sección sobre códigos RFC si existen
+    if (rfcSectionCodes.length > 0) {
+      lines.push('### RFC Section Codes (CRITICAL FOR REFERENCE)');
+      lines.push('');
+      lines.push('The RFC has been divided into sections with unique codes. When referencing RFC content,');
+      lines.push('you MUST include the section code (e.g., RFC-SEC-001) in your response.');
+      lines.push('');
+      lines.push('Available RFC sections:');
+      rfcSectionCodes.forEach((section, idx) => {
+        lines.push(`${idx + 1}. **[${section.code}]** ${section.header}`);
+      });
+      lines.push('');
+      lines.push('When extracting RFC references for tasks, you MUST:');
+      lines.push('1. Identify the EXACT section code (e.g., RFC-SEC-001)');
+      lines.push('2. Copy the COMPLETE section content including headers');
+      lines.push('3. Include the section code in your response as `rfc_section_identifier`');
+      lines.push('');
+    }
+    
+    lines.push('### Explicit Reference Extraction (CRITICAL)');
+    lines.push('');
+    lines.push('For EACH task, you MUST extract and include the following explicit references:');
+    lines.push('');
+    lines.push('1. **story_section_reference**: Copy the EXACT text from the User Story that this task fulfills:');
+    lines.push('   - Specific acceptance criteria this task addresses');
+    lines.push('   - Relevant parts of story description');
+    lines.push('   - Include full context, not just keywords');
+    lines.push('');
+    lines.push('2. **design_section_reference**: Copy the EXACT design element from the User Flow:');
+    lines.push('   - Specific flow step(s) from Mermaid diagram');
+    lines.push('   - UI/UX specifications');
+    lines.push('   - Interaction patterns');
+    lines.push('   - Include diagram code or description if applicable');
+    lines.push('');
+    lines.push('3. **rfc_section_reference**: Copy the COMPLETE RFC section that contains technical specifications:');
+    if (rfcSectionCodes.length > 0) {
+      lines.push('   - Include the section code (e.g., RFC-SEC-001)');
+    }
+    lines.push('   - Include section headers (##, ###)');
+    lines.push('   - All API endpoint specifications');
+    lines.push('   - Database schema definitions');
+    lines.push('   - Interface definitions');
+    lines.push('   - Code examples if present');
+    lines.push('   - Copy until the next major section header (##)');
+    lines.push('');
+    if (rfcSectionCodes.length > 0) {
+      lines.push('4. **rfc_section_identifier**: Use the EXACT section code from the RFC (e.g., RFC-SEC-001, RFC-SEC-002):');
+      lines.push('   - This code is visible in the RFC header as `[RFC-SEC-XXX]`');
+      lines.push('   - Must match one of the codes listed above');
+      lines.push('   - Used for tracking and validation');
+      lines.push('');
+      lines.push('5. **dependencies_with_types**: Enhanced dependency information:');
+    } else {
+      lines.push('4. **rfc_section_identifier**: Generate a unique identifier for the RFC section:');
+      lines.push('   - Format: lowercase-with-hyphens based on headers');
+      lines.push('   - Example: "api-endpoints-user-management" for section "## API Endpoints\n### User Management"');
+      lines.push('   - Used for tracking and validation');
+      lines.push('');
+      lines.push('5. **dependencies_with_types**: Enhanced dependency information:');
+    }
+    lines.push('   - Array of objects: [{ "task_title": "...", "type": "blocking|soft|data|api" }]');
+    lines.push('   - Or simple array of titles for backward compatibility: ["Task title 1", "Task title 2"]');
+    lines.push('');
+    
     lines.push('### Output Format');
     lines.push('');
     lines.push('Return a JSON object with the following structure:');
@@ -241,6 +317,15 @@ export class BreakdownService {
     lines.push('      "estimated_days": 1.5,');
     lines.push('      "story_points": 3,');
     lines.push('      "breakdown_order": 1,');
+    lines.push('      "story_section_reference": "Exact text from user story...",');
+    lines.push('      "design_section_reference": "Exact design element...",');
+    if (rfcSectionCodes.length > 0) {
+      lines.push('      "rfc_section_reference": "## API Endpoints `[RFC-SEC-001]`\n### POST /api/users\n...",');
+      lines.push('      "rfc_section_identifier": "RFC-SEC-001",  // MUST match code from RFC');
+    } else {
+      lines.push('      "rfc_section_reference": "## API Endpoints\n### POST /api/users\n...",');
+      lines.push('      "rfc_section_identifier": "api-endpoints-user-management",');
+    }
     lines.push('      "dependencies": ["Blocking task title 1", "Blocking task title 2"],');
     lines.push('      "acceptance_criteria": [');
     lines.push('        {');
@@ -277,8 +362,12 @@ export class BreakdownService {
       estimated_days: number;
       story_points?: number;
       breakdown_order: number;
-      dependencies?: string[];
+      dependencies?: string[] | Array<{ task_title: string; type?: string }>;
       acceptance_criteria: any[];
+      story_section_reference?: string;
+      design_section_reference?: string;
+      rfc_section_reference?: string;
+      rfc_section_identifier?: string;
     }>;
   }> {
     // Try to extract JSON object from response

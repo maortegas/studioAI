@@ -15,6 +15,7 @@ import ReleaseManager from '../components/ReleaseManager';
 import RFCManager from '../components/RFCManager';
 import BreakdownManager from '../components/BreakdownManager';
 import ProjectReviewDashboard from '../components/ProjectReviewDashboard';
+import DatabaseSetup from '../components/DatabaseSetup';
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
@@ -63,6 +64,7 @@ export default function ProjectDetail() {
   }
 
   return (
+  
     <div className="px-4">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">{project.name}</h1>
@@ -110,6 +112,7 @@ export default function ProjectDetail() {
                 </p>
               </div>
             </div>
+            <DatabaseSetup projectId={project.id} />
             <StageTracker projectId={project.id} />
           </div>
         )}

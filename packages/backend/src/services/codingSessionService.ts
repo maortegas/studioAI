@@ -85,6 +85,9 @@ export class CodingSessionService {
       programmer_type: data.programmer_type,
     });
 
+    // Initialize AgentDB for all test strategies
+    await this.initializeAgentDB(session.id, data.story_id, data.project_id);
+
     const { Pool } = await import('pg');
     const pool = (await import('../config/database')).default;
     const testStrategy = data.test_strategy || 'tdd';
@@ -157,7 +160,7 @@ export class CodingSessionService {
       );
     } else if (testStrategy === 'after') {
       // 'after': Skip test generation, start implementation directly, generate tests after
-      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined);
+      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined, session.id);
       const implJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -182,7 +185,7 @@ export class CodingSessionService {
       );
     } else {
       // 'none': Skip test generation entirely, start implementation directly, no tests after
-      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined);
+      const implementationPrompt = await this.buildImplementationPrompt(story, data.programmer_type, data.project_id, undefined, session.id);
       const implJob = await this.aiService.createAIJob({
         project_id: data.project_id,
         task_id: data.story_id,
@@ -440,6 +443,52 @@ export class CodingSessionService {
   }
 
   /**
+   * Reset a session to initial state
+   * Clears all progress, errors, and job references
+   */
+  async resetSession(sessionId: string): Promise<CodingSession> {
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    // Reset session to initial state
+    // Use direct SQL query to set fields to NULL
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+    
+    await pool.query(
+      `UPDATE coding_sessions SET
+        status = $1,
+        progress = $2,
+        test_progress = $3,
+        implementation_progress = $4,
+        current_file = NULL,
+        output = NULL,
+        error = NULL,
+        ai_job_id = NULL,
+        test_generation_job_id = NULL,
+        implementation_job_id = NULL,
+        started_at = NULL,
+        completed_at = NULL
+       WHERE id = $5`,
+      ['pending', 0, 0, 0, sessionId]
+    );
+
+    // Add event
+    await this.sessionRepo.addEvent(sessionId, 'progress', {
+      message: 'Session reset to initial state by user',
+    });
+
+    const updatedSession = await this.sessionRepo.findById(sessionId);
+    if (!updatedSession) {
+      throw new Error('Failed to retrieve updated session');
+    }
+
+    return updatedSession;
+  }
+
+  /**
    * Delete/Cancel a session
    */
   async deleteSession(sessionId: string): Promise<void> {
@@ -496,6 +545,223 @@ export class CodingSessionService {
     await this.sessionRepo.delete(sessionId);
 
     return newSession;
+  }
+
+  /**
+   * Retry a failed coding session with custom user instructions
+   */
+  async retrySessionWithInstructions(sessionId: string, userInstructions: string): Promise<any> {
+    console.log(`[CodingSessionService] Retrying session ${sessionId} with custom instructions`);
+
+    const { Pool } = await import('pg');
+    const pool = (await import('../config/database')).default;
+
+    // Get session details
+    const session = await this.sessionRepo.findById(sessionId);
+    if (!session) {
+      throw new Error('Coding session not found');
+    }
+
+    // Get test failures - try multiple strategies
+    // Strategy 1: Look for test_suites with status 'failed'
+    let testSuites = await pool.query(
+      'SELECT id, name FROM test_suites WHERE coding_session_id = $1 AND status = \'failed\'',
+      [sessionId]
+    );
+
+    // Strategy 2: If no failed test_suites, look for failed test_executions
+    if (testSuites.rows.length === 0) {
+      console.log(`[CodingSessionService] No failed test_suites found, checking test_executions...`);
+      const failedExecutions = await pool.query(
+        `SELECT te.error_message, te.output, te.status, ts.id as suite_id, ts.name as suite_name
+         FROM test_executions te
+         JOIN test_suites ts ON te.test_suite_id = ts.id
+         WHERE ts.coding_session_id = $1 AND te.status = 'failed'
+         ORDER BY te.completed_at DESC LIMIT 1`,
+        [sessionId]
+      );
+
+      if (failedExecutions.rows.length > 0) {
+        console.log(`[CodingSessionService] Found ${failedExecutions.rows.length} failed test_executions`);
+        // Update the test_suite status to 'failed' for consistency
+        await pool.query(
+          'UPDATE test_suites SET status = $1 WHERE id = $2',
+          ['failed', failedExecutions.rows[0].suite_id]
+        );
+        testSuites = { rows: [{ id: failedExecutions.rows[0].suite_id, name: failedExecutions.rows[0].suite_name }] };
+      }
+    }
+
+    // Strategy 3: If still no failures, check for any test_executions with errors
+    let errorDetails = 'Unknown error';
+    if (testSuites.rows.length > 0) {
+      const testExecutions = await pool.query(
+        `SELECT error_message, output FROM test_executions
+         WHERE test_suite_id IN (
+           SELECT id FROM test_suites WHERE coding_session_id = $1 AND status = 'failed'
+         )
+         ORDER BY completed_at DESC LIMIT 1`,
+        [sessionId]
+      );
+
+      errorDetails = testExecutions.rows[0]?.error_message ||
+                    testExecutions.rows[0]?.output ||
+                    'Unknown error';
+    } else {
+      // Strategy 4: Check for any errors in the session itself or recent test_executions
+      console.log(`[CodingSessionService] No failed tests found, checking session error and recent executions...`);
+      
+      // Check session error
+      if (session.error) {
+        errorDetails = session.error;
+        console.log(`[CodingSessionService] Using session error: ${errorDetails.substring(0, 100)}`);
+      } else {
+        // Check for any test_executions with errors (even if status is not 'failed')
+        const anyExecutions = await pool.query(
+          `SELECT te.error_message, te.output, te.status
+           FROM test_executions te
+           JOIN test_suites ts ON te.test_suite_id = ts.id
+           WHERE ts.coding_session_id = $1 
+             AND (te.error_message IS NOT NULL OR te.status = 'error')
+           ORDER BY te.completed_at DESC LIMIT 1`,
+          [sessionId]
+        );
+
+        if (anyExecutions.rows.length > 0) {
+          errorDetails = anyExecutions.rows[0]?.error_message ||
+                        anyExecutions.rows[0]?.output ||
+                        'Test execution had errors';
+          console.log(`[CodingSessionService] Found execution with errors: ${errorDetails.substring(0, 100)}`);
+        } else {
+          // No errors found, but allow retry with user instructions anyway
+          errorDetails = 'No specific errors found. Retrying with user instructions.';
+          console.log(`[CodingSessionService] No errors found, allowing retry with user instructions only`);
+        }
+      }
+    }
+
+    // Store user instructions in coding_session_events for context
+    await pool.query(
+      `INSERT INTO coding_session_events (session_id, event_type, payload)
+       VALUES ($1, $2, $3)`,
+      [
+        sessionId,
+        'user_instructions',
+        JSON.stringify({
+          instructions: userInstructions,
+          timestamp: new Date().toISOString(),
+          error_context: errorDetails.substring(0, 500) // First 500 chars of error
+        })
+      ]
+    );
+
+    // Reset session status to allow retry
+    await pool.query(
+      `UPDATE coding_sessions
+       SET status = $1, error = NULL
+       WHERE id = $2`,
+      ['pending', sessionId]
+    );
+
+    // Reset test suites to ready (if any were failed)
+    if (testSuites.rows.length > 0) {
+      await pool.query(
+        `UPDATE test_suites
+         SET status = 'ready'
+         WHERE coding_session_id = $1 AND status = 'failed'`,
+        [sessionId]
+      );
+    } else {
+      // If no failed test_suites, reset any test_suites that are not 'passed' to 'ready'
+      await pool.query(
+        `UPDATE test_suites
+         SET status = 'ready'
+         WHERE coding_session_id = $1 AND status != 'passed'`,
+        [sessionId]
+      );
+    }
+
+    // Get story for building prompt
+    const story = await this.taskRepo.findById(session.story_id);
+    if (!story) {
+      throw new Error('Story not found');
+    }
+
+    // Build prompt with user instructions
+    const retryPrompt = await this.buildRetryPromptWithInstructions(
+      session.project_id,
+      story,
+      errorDetails,
+      userInstructions
+    );
+
+    // Create AI job for retry
+    const job = await this.aiService.createAIJob({
+      project_id: session.project_id,
+      provider: 'cursor',
+      mode: 'patch',
+      prompt: retryPrompt,
+    }, {
+      coding_session_id: sessionId,
+      phase: 'tdd_green',
+    });
+
+    console.log(`[CodingSessionService] Created retry job ${job.id} with user instructions`);
+
+    return {
+      message: 'Retry started with your custom instructions',
+      job_id: job.id,
+      session_id: sessionId
+    };
+  }
+
+  /**
+   * Build retry prompt that includes user instructions
+   */
+  private async buildRetryPromptWithInstructions(
+    projectId: string,
+    story: any,
+    errorDetails: string,
+    userInstructions: string
+  ): Promise<string> {
+    const lines: string[] = [];
+
+    // Get context bundle
+    const promptBundle = await this.aiService.buildPromptBundle(projectId, story.id);
+    lines.push(promptBundle);
+    lines.push('\n---\n');
+
+    lines.push(`# 🔧 RETRY WITH USER INSTRUCTIONS\n\n`);
+
+    lines.push(`## ⚠️ CRITICAL: USER PROVIDED SPECIFIC INSTRUCTIONS\n\n`);
+    lines.push(`**The user has analyzed the test failure and provided these SPECIFIC INSTRUCTIONS:**\n\n`);
+    lines.push(`\`\`\`\n`);
+    lines.push(userInstructions);
+    lines.push(`\n\`\`\`\n\n`);
+
+    lines.push(`**YOU MUST FOLLOW THESE INSTRUCTIONS EXACTLY.**\n\n`);
+    lines.push(`The user knows the codebase and has identified the specific issue. `);
+    lines.push(`Do NOT ignore their guidance.\n\n`);
+
+    lines.push(`## Test Failure Details\n\n`);
+    lines.push(`The previous implementation attempt failed with this error:\n\n`);
+    lines.push(`\`\`\`\n`);
+    lines.push(errorDetails);
+    lines.push(`\n\`\`\`\n\n`);
+
+    lines.push(`## Your Task\n\n`);
+    lines.push(`1. **READ the user instructions carefully** (they know what went wrong)\n`);
+    lines.push(`2. **APPLY their specific guidance** to fix the issue\n`);
+    lines.push(`3. **IMPLEMENT the fix** following their directions\n`);
+    lines.push(`4. **VERIFY** that your changes address their concerns\n\n`);
+
+    lines.push(`## Important Notes\n\n`);
+    lines.push(`- The user's instructions are HIGHER PRIORITY than general best practices\n`);
+    lines.push(`- If there's a conflict between user instructions and PRD/RFC, FOLLOW USER INSTRUCTIONS\n`);
+    lines.push(`- The user is trying to help you avoid repeating the same mistake\n`);
+    lines.push(`- Be grateful for their help and implement exactly what they suggest\n\n`);
+
+    return lines.join('\n');
   }
 
   /**
@@ -656,6 +922,107 @@ export class CodingSessionService {
     lines.push(`5. DO NOT include ANY explanatory text outside code blocks\n`);
     lines.push(`6. DO NOT write "I've generated..." or "Here's..."\n`);
     lines.push(`7. If you include text outside code blocks, the tests will FAIL\n\n`);
+
+    lines.push(`🚨 **CRITICAL - SINGLE FILE ONLY:**\n\n`);
+    lines.push(`**YOU MUST GENERATE EXACTLY ONE (1) TEST FILE - NOT MULTIPLE FILES**\n\n`);
+
+    lines.push(`❌ **WRONG - DO NOT DO THIS:**\n`);
+    lines.push(`\`\`\`javascript\n`);
+    lines.push(`// backend/tests/unit/authService.test.js\n`);
+    lines.push(`import jwt from 'jsonwebtoken';\n`);
+    lines.push(`describe('AuthService', () => { ... });\n`);
+    lines.push(`\n`);
+    lines.push(`// backend/tests/unit/authMiddleware.test.js ❌ SECOND FILE - FORBIDDEN!\n`);
+    lines.push(`import jwt from 'jsonwebtoken'; // ❌ DUPLICATE IMPORT - CAUSES ERROR!\n`);
+    lines.push(`describe('AuthMiddleware', () => { ... });\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`✅ **CORRECT - DO THIS:**\n`);
+    lines.push(`\`\`\`javascript\n`);
+    lines.push(`// ONE file with ALL related tests\n`);
+    lines.push(`import jwt from 'jsonwebtoken';\n`);
+    lines.push(`import { authService } from '../services/authService';\n`);
+    lines.push(`import { authMiddleware } from '../middleware/authMiddleware';\n\n`);
+    lines.push(`describe('Authentication System', () => {\n`);
+    lines.push(`  describe('AuthService', () => {\n`);
+    lines.push(`    it('should register user', () => { ... });\n`);
+    lines.push(`  });\n`);
+    lines.push(`  describe('AuthMiddleware', () => {\n`);
+    lines.push(`    it('should validate token', () => { ... });\n`);
+    lines.push(`  });\n`);
+    lines.push(`});\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`**WHY THIS MATTERS:**\n`);
+    lines.push(`- Multiple files in one response = DUPLICATE IMPORTS = SYNTAX ERROR = 0 TESTS RUN ❌\n`);
+    lines.push(`- One file with nested describe() blocks = Clean imports = ALL TESTS RUN ✅\n`);
+    lines.push(`- The system will save your response as a SINGLE .test.js file\n`);
+    lines.push(`- Concatenating multiple files breaks Jest execution\n\n`);
+
+    lines.push(`🚨 **CRITICAL - NO DUPLICATE TEST SUITES:**\n\n`);
+    lines.push(`**YOU MUST GENERATE EXACTLY ONE (1) DESCRIBE BLOCK - DO NOT CREATE MULTIPLE SUITES FOR THE SAME FUNCTIONALITY**\n\n`);
+
+    lines.push(`❌ **WRONG - DUPLICATE SUITES (DO NOT DO THIS):**\n`);
+    lines.push(`\`\`\`typescript\n`);
+    lines.push(`import { EmployeeService } from '../../src/services/employeeService';\n`);
+    lines.push(`import { prisma } from '../../src/config/database';\n\n`);
+    lines.push(`// Mock configuration\n`);
+    lines.push(`jest.mock('../../src/config/database', () => ({ prisma: mockPrisma }));\n\n`);
+    lines.push(`// FIRST SUITE - Unit tests with mocks\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => {\n`);
+    lines.push(`  it('should update employee', () => { ... });\n`);
+    lines.push(`});\n\n`);
+    lines.push(`// ❌ SECOND SUITE - Integration tests with real DB - FORBIDDEN!\n`);
+    lines.push(`const prisma = new PrismaClient(); // ❌ CONFLICTS WITH MOCK ABOVE!\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => { // ❌ DUPLICATE SUITE!\n`);
+    lines.push(`  it('should update employee in database', () => { ... });\n`);
+    lines.push(`});\n\n`);
+    lines.push(`// ❌ THIRD SUITE - Another approach - FORBIDDEN!\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => { // ❌ DUPLICATE SUITE!\n`);
+    lines.push(`  it('should validate input', () => { ... });\n`);
+    lines.push(`});\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`✅ **CORRECT - ONE SUITE WITH ALL TESTS (DO THIS):**\n`);
+    lines.push(`\`\`\`typescript\n`);
+    lines.push(`import { EmployeeService } from '../../src/services/employeeService';\n\n`);
+    lines.push(`// Single mock configuration at the top\n`);
+    lines.push(`const mockFindUnique = jest.fn();\n`);
+    lines.push(`const mockUpdate = jest.fn();\n\n`);
+    lines.push(`jest.mock('../../src/config/database', () => ({\n`);
+    lines.push(`  prisma: {\n`);
+    lines.push(`    employee: {\n`);
+    lines.push(`      findUnique: mockFindUnique,\n`);
+    lines.push(`      update: mockUpdate,\n`);
+    lines.push(`    },\n`);
+    lines.push(`  },\n`);
+    lines.push(`}));\n\n`);
+    lines.push(`// ONE SUITE with all tests\n`);
+    lines.push(`describe('EmployeeService.updateEmployee', () => {\n`);
+    lines.push(`  beforeEach(() => {\n`);
+    lines.push(`    jest.clearAllMocks();\n`);
+    lines.push(`  });\n\n`);
+    lines.push(`  it('should successfully update employee with valid data', () => { ... });\n`);
+    lines.push(`  it('should throw error if employee not found', () => { ... });\n`);
+    lines.push(`  it('should validate input data with Zod schema', () => { ... });\n`);
+    lines.push(`  it('should handle database errors', () => { ... });\n`);
+    lines.push(`});\n`);
+    lines.push(`\`\`\`\n\n`);
+
+    lines.push(`**WHY MULTIPLE SUITES CAUSE PROBLEMS:**\n`);
+    lines.push(`- Jest mock hoisting conflicts: Cannot access variables before initialization ❌\n`);
+    lines.push(`- Duplicate describe() blocks confuse Jest test runner\n`);
+    lines.push(`- Mixing mocks with real instances creates unpredictable behavior\n`);
+    lines.push(`- Tests become difficult to maintain and debug\n`);
+    lines.push(`- One suite with multiple it() blocks = Clean, predictable tests ✅\n\n`);
+
+    lines.push(`**MOCKING BEST PRACTICES:**\n`);
+    lines.push(`1. Create mock functions BEFORE jest.mock() call\n`);
+    lines.push(`2. Use jest.mock() at the top level (not inside describe)\n`);
+    lines.push(`3. Import services/modules AFTER jest.mock() declarations\n`);
+    lines.push(`4. Use a single describe() block for all related tests\n`);
+    lines.push(`5. Clear mocks in beforeEach() to ensure test isolation\n`);
+    lines.push(`6. For unit tests: Use mocks. For integration tests: Use real DB (but pick ONE approach)\n\n`);
 
     lines.push(`═══════════════════════════════════════════════════════════════\n\n`);
 
@@ -876,8 +1243,30 @@ export class CodingSessionService {
   /**
    * Build implementation prompt (alias for buildCodingPrompt)
    */
-  private async buildImplementationPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string): Promise<string> {
-    return this.buildCodingPrompt(story, programmerType, projectId, testsOutput);
+  private async buildImplementationPrompt(story: any, programmerType: ProgrammerType, projectId: string, testsOutput?: string, sessionId?: string): Promise<string> {
+    return this.buildCodingPrompt(story, programmerType, projectId, testsOutput, sessionId);
+  }
+
+  /**
+   * Initialize AgentDB and store traceability chain for any test strategy
+   * This is a lightweight initialization that doesn't require tests
+   */
+  private async initializeAgentDB(sessionId: string, storyId: string, projectId: string): Promise<void> {
+    try {
+      const project = await this.projectRepo.findById(projectId);
+      if (!project) {
+        throw new Error('Project not found');
+      }
+
+      // Store traceability chain in AgentDB
+      const { AgentDBTraceabilityStore } = await import('./agentdb/AgentDBTraceabilityStore');
+      const traceabilityStore = new AgentDBTraceabilityStore(project.base_path, sessionId);
+      await traceabilityStore.storeTraceabilityChain(storyId);
+      console.log(`[CodingSessionService] ✅ Stored traceability chain in AgentDB for session ${sessionId}`);
+    } catch (error) {
+      console.warn(`[CodingSessionService] Could not initialize AgentDB for session ${sessionId}:`, error);
+      // Don't throw - AgentDB is optional, continue without it
+    }
   }
 
   /**
@@ -1153,9 +1542,72 @@ export class CodingSessionService {
       lines.push(`\n`);
     }
 
+    // Obtener sección RFC por código si existe
+    let rfcExcerpt: string | null = null;
+    if ((story as any).rfc_section_code || (story as any).rfc_section_identifier) {
+      const sectionCode = (story as any).rfc_section_code || (story as any).rfc_section_identifier;
+      
+      if (sectionCode) {
+        try {
+          const { RFCSectionCodeService } = await import('./rfcSectionCodeService');
+          const rfcCodeService = new RFCSectionCodeService();
+          
+          // Obtener epic para encontrar rfc_id
+          if ((story as any).epic_id) {
+            const { EpicRepository } = await import('../repositories/epicRepository');
+            const epicRepo = new EpicRepository();
+            const epic = await epicRepo.findById((story as any).epic_id);
+            
+            if (epic && epic.rfc_id) {
+              const section = await rfcCodeService.getSectionByCode(epic.rfc_id, sectionCode);
+              if (section) {
+                rfcExcerpt = section.content;
+                
+                // Validar que el contenido no haya cambiado (comparar hash si existe)
+                if ((story as any).rfc_section_hash) {
+                  const crypto = await import('crypto');
+                  const currentHash = crypto.createHash('sha256').update(rfcExcerpt).digest('hex');
+                  if (currentHash !== (story as any).rfc_section_hash) {
+                    console.warn(`[CodingSessionService] RFC section hash mismatch for task ${story.id} - RFC may have changed`);
+                  }
+                }
+              } else {
+                // Fallback: usar referencia guardada si el código no existe
+                rfcExcerpt = (story as any).rfc_section_reference || null;
+              }
+            }
+          }
+        } catch (error) {
+          console.warn(`[CodingSessionService] Could not load RFC section by code:`, error);
+          // Fallback: usar referencia guardada
+          rfcExcerpt = (story as any).rfc_section_reference || null;
+        }
+      }
+    } else if ((story as any).rfc_section_reference) {
+      // Si no hay código pero hay referencia guardada, usarla
+      rfcExcerpt = (story as any).rfc_section_reference;
+    }
+    
+    // Inyectar sección RFC explícita si existe
+    if (rfcExcerpt) {
+      lines.push(`\n## ⚠️ CRITICAL: RFC Technical Specifications (Section: ${(story as any).rfc_section_code || (story as any).rfc_section_identifier || 'N/A'})\n\n`);
+      lines.push(`**This RFC section was EXPLICITLY identified for this task during breakdown.**\n`);
+      lines.push(`**Section Code**: ${(story as any).rfc_section_code || (story as any).rfc_section_identifier || 'N/A'}\n`);
+      lines.push(`**You MUST follow these specifications EXACTLY. Do NOT deviate, invent, or modify.**\n`);
+      lines.push(`**Any deviation from these specifications is an error.**\n\n`);
+      lines.push(`\`\`\`\n`);
+      lines.push(rfcExcerpt);
+      lines.push(`\n\`\`\`\n\n`);
+      lines.push(`**Validation**: After implementation, verify your code matches these specifications exactly.\n\n`);
+    }
+    
     lines.push(`## Instructions\n`);
     lines.push(`**IMPORTANT - Reference Context Above:**\n`);
-    lines.push(`- Follow the RFC (Technical Design) for architecture, API contracts, and database schema\n`);
+    if (rfcExcerpt) {
+      lines.push(`- **CRITICAL**: Follow the RFC Technical Specifications section above EXACTLY (do not deviate)\n`);
+    } else {
+      lines.push(`- Follow the RFC (Technical Design) for architecture, API contracts, and database schema\n`);
+    }
     lines.push(`- Respect User Flows & Design for UI/UX implementation\n`);
     lines.push(`- Follow the Breakdown specifications and dependencies\n`);
     lines.push(`- Ensure alignment with all User Stories and their acceptance criteria\n`);
@@ -1209,6 +1661,16 @@ export class CodingSessionService {
       }
       lines.push(`\nWrite clean, maintainable, and well-documented code that aligns with all context provided above.`);
     }
+
+    // Add explicit restrictions on documentation file generation
+    lines.push(`\n**CRITICAL - DO NOT GENERATE DOCUMENTATION FILES:**\n`);
+    lines.push(`❌ DO NOT create README.md, QUICK_START.md, IMPLEMENTATION_SUMMARY.md, INTEGRATION_DIAGRAM.md, or any other documentation files\n`);
+    lines.push(`❌ DO NOT generate usage guides, API documentation files, integration guides, or setup instructions\n`);
+    lines.push(`❌ DO NOT create any markdown files in shared/, backend/, frontend/, or any other directories\n`);
+    lines.push(`✅ ONLY implement the actual code files required for the task (TypeScript/JavaScript files)\n`);
+    lines.push(`✅ Code comments within source files are acceptable and encouraged\n`);
+    lines.push(`✅ Inline documentation in code (JSDoc comments) is acceptable\n`);
+    lines.push(`✅ Focus on implementing functional code, not documentation files\n`);
 
     // Add previous context if available
     if (previousContext) {
@@ -1316,11 +1778,12 @@ export class CodingSessionService {
     // 1. Load context bundle ONCE
     const contextBundle = await this.aiService.buildPromptBundle(session.project_id, story.id);
 
-    // 2. Store full traceability chain in AgentDB
+    // 2. Reuse generic AgentDB initialization (already called in createSession, but ensure it's done)
+    await this.initializeAgentDB(sessionId, story.id, session.project_id);
+
+    // Create traceabilityStore instance for executeAllAtOnceTDD
     const { AgentDBTraceabilityStore } = await import('./agentdb/AgentDBTraceabilityStore');
     const traceabilityStore = new AgentDBTraceabilityStore(project.base_path, sessionId);
-    await traceabilityStore.storeTraceabilityChain(story.id);
-    console.log(`[TDD] ✅ Stored traceability chain in AgentDB`);
 
     // 3. Initialize Context Manager (now uses AgentDB)
     const contextManager = new TDDContextManager(project.base_path, sessionId);
@@ -2305,14 +2768,6 @@ Start implementation now.
 
       // Check for duplicate .js/.ts files in database/ directory
       await this.cleanupDuplicateExtensions(path.join(projectPath, 'database'), results);
-
-      // Clean up Jest configuration conflicts
-      try {
-        await this.structureService.cleanupJestConfigConflict(projectPath);
-      } catch (error: any) {
-        console.warn('[CodingSessionService] ⚠️ Error cleaning up Jest config conflict:', error.message);
-        results.errors.push(`Error cleaning Jest config: ${error.message}`);
-      }
 
       console.log(`[CodingSessionService] ✅ Cleanup complete: ${results.moved} files moved, ${results.deleted} duplicates deleted`);
     } catch (error: any) {
