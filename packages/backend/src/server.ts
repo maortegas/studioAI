@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import projectsRouter from './routes/projects';
+import databaseRouter from './routes/database';
 import artifactsRouter from './routes/artifacts';
 import tasksRouter from './routes/tasks';
 import aiJobsRouter from './routes/ai-jobs';
@@ -41,6 +42,7 @@ app.use('/uploads', express.static('uploads'));
 
 // Routes
 app.use('/api/projects', validateProjectPath, projectsRouter);
+app.use('/api/projects/:id/database', databaseRouter);
 app.use('/api/artifacts', artifactsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/ai-jobs', aiJobsRouter);
